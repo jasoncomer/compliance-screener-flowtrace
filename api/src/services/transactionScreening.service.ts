@@ -32,14 +32,20 @@ export class TransactionScreeningService {
 
       console.log(`Processing transactions for ${monitoredAddresses.length} monitored addresses`);
 
-      // Process one monitored address at a time
+      // Process one monitored address at a time with better error handling
       for (const address of monitoredAddresses) {
-        await this.processAddressTransactions(address);
+        try {
+          await this.processAddressTransactions(address);
+        } catch (error) {
+          console.error(`Error processing transactions for address ${address.address}:`, error);
+          // Continue with next address instead of stopping the entire process
+        }
       }
 
       console.log(`Processed transactions for ${monitoredAddresses.length} monitored addresses`);
     } catch (error) {
       console.error('Error processing transactions:', error);
+      // Don't rethrow - let the scheduler continue
     }
   }
 

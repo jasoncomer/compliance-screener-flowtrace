@@ -81,4 +81,38 @@ flowtrace_backup_*/
 
 # Cache directories
 .cache/
-.parcel-cache/ 
+.parcel-cache/
+
+# API uploads and large files
+api/public/uploads/
+api/public/invoices/
+api/public/pdf/
+api/public/tests/
+
+# Node modules
+api/node_modules/
+flowtrace/node_modules/
+
+# Build outputs
+api/dist/
+api/build/
+flowtrace/.next/
+flowtrace/out/
+
+# Environment files
+api/.env*
+flowtrace/.env*
+
+# Logs
+api/logs/
+flowtrace/logs/
+*.log
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp 

@@ -23,7 +23,7 @@ import Image from "next/image"
 import { formatDateConsistent, isValidAddress, generateUniqueTxHash } from "@/lib/utils"
 import { autoSaveManager } from "@/lib/auto-save"
 import { migrateOldData, loadVersion, updateMasterVersion, createWorkspace, type Workspace, getWorkspace } from "@/lib/workspace-utils"
-import { fetchAddressData, fetchAttributionData, fetchRiskScoringData } from '@/lib/api';
+import { fetchAddressData, fetchAttributionData, fetchRiskScoringData, fetchTransactionData, fetchSOTData } from '@/lib/api';
 import { getSafeLogoPath } from '@/lib/logo-utils';
 import axios from 'axios';
 import { debugLogger, captureApiError } from '@/lib/debug-utils';
@@ -204,6 +204,7 @@ export default function FlowTraceApp() {
       chainLogo: "/logos/eth.png", // Primary chain logo
       balance: "0.0 ETH",
       transactions: 15420,
+      availableTransactions: 15420,
     },
     {
       id: "bridge2",
@@ -219,6 +220,7 @@ export default function FlowTraceApp() {
       chainLogo: "/logos/eth.png", // Primary chain logo
       balance: "0.0 AVAX",
       transactions: 8900,
+      availableTransactions: 8900,
     },
     {
       id: "passthrough1",
@@ -231,6 +233,7 @@ export default function FlowTraceApp() {
       risk: "medium",
       balance: "0.001 BTC",
       transactions: 2,
+      availableTransactions: 2,
       isPassThrough: true,
       logo: "/logos/btc.png", // Bitcoin chain logo as main logo
       chainLogo: "/logos/btc.png", // Bitcoin chain logo
@@ -245,6 +248,7 @@ export default function FlowTraceApp() {
       risk: "medium",
       balance: "0.001 ETH",
       transactions: 2,
+      availableTransactions: 2,
       isPassThrough: true,
       logo: "/logos/eth.png", // Ethereum chain logo as main logo
       chainLogo: "/logos/eth.png", // Ethereum chain logo
@@ -503,13 +507,32 @@ export default function FlowTraceApp() {
   }, [leftPanelCollapsed])
 
   const handleNodeSelect = async (address: string, nodeData?: any) => {
+    console.log('🔍 handleNodeSelect called with:', { address, nodeData });
     setSelectedAddress(address)
     setSelectedNode(nodeData)
     
     // Fetch real data for the selected node if it's not a custom node
+    console.log('Checking if should fetch real data:', { 
+      hasNodeData: !!nodeData, 
+      nodeType: nodeData?.type, 
+      isNotCustom: nodeData?.type !== 'custom', 
+      hasAddress: !!address 
+    });
     if (nodeData && nodeData.type !== 'custom' && address) {
       try {
         const realNodeData = await fetchNodeData(address)
+        
+        // Preserve original transaction count if API returns 0 but we have existing data
+        const preserveTransactions = (originalCount: number, apiCount: number) => {
+          if (originalCount > 0 && apiCount === 0) {
+            console.log(`Preserving original transaction count: ${originalCount} (API returned 0)`);
+            return originalCount;
+          }
+          return apiCount;
+        };
+        
+        const finalTransactions = preserveTransactions(nodeData.transactions || 0, realNodeData.transactions);
+        const finalAvailableTransactions = preserveTransactions(nodeData.availableTransactions || 0, realNodeData.transactions);
         
         // Update the selected node with real data
         setSelectedNode((prev: any) => ({
@@ -518,9 +541,11 @@ export default function FlowTraceApp() {
           type: realNodeData.entityType,
           risk: realNodeData.riskLevel,
           balance: realNodeData.balance,
-          transactions: realNodeData.transactions,
+          transactions: finalTransactions,
           logo: realNodeData.logo,
-          availableTransactions: realNodeData.transactions
+          availableTransactions: finalAvailableTransactions,
+          entity_type: realNodeData.entityTypeFromSOT,
+          entity_tags: realNodeData.entityTags
         }))
         
         // Also update the node in the nodes array
@@ -532,9 +557,11 @@ export default function FlowTraceApp() {
                 type: realNodeData.entityType,
                 risk: realNodeData.riskLevel,
                 balance: realNodeData.balance,
-                transactions: realNodeData.transactions,
+                transactions: finalTransactions,
                 logo: realNodeData.logo,
-                availableTransactions: realNodeData.transactions
+                availableTransactions: finalAvailableTransactions,
+                entity_type: realNodeData.entityTypeFromSOT,
+                entity_tags: realNodeData.entityTags
               }
             : node
         ))
@@ -567,6 +594,7 @@ export default function FlowTraceApp() {
       chainLogo: nodeData.logo, // Use the same logo as chain logo for custom nodes
       balance: `0 ${nodeData.currencyCode}`,
       transactions: 0,
+      availableTransactions: 0,
       notes: nodeData.notes ? [{
         id: `note_${Date.now()}`,
         userId: "current_user", // This would come from your user system
@@ -609,6 +637,7 @@ export default function FlowTraceApp() {
         chainLogo: placementMode.nodeData.logo, // Use the same logo as chain logo for custom nodes
         balance: `0 ${placementMode.nodeData.currencyCode}`,
         transactions: 0,
+        availableTransactions: 0,
         notes: placementMode.nodeData.notes ? [{
           id: `note_${Date.now()}`,
           userId: "current_user", // This would come from your user system
@@ -1000,22 +1029,58 @@ export default function FlowTraceApp() {
       console.log('Fetching real data for address:', address);
       
       // Fetch all data in parallel
-      const [addressData, attributionData, riskData] = await Promise.all([
-        fetchAddressData(address).catch(() => null),
-        fetchAttributionData([address]).catch(() => null),
-        fetchRiskScoringData(address, 'address').catch(() => null)
+      console.log('Starting API calls for address:', address);
+      const [addressData, attributionData, riskData, transactionData] = await Promise.all([
+        fetchAddressData(address).catch((error) => {
+          console.error('Address data API failed for', address, ':', error);
+          return null;
+        }),
+        fetchAttributionData([address]).catch((error) => {
+          console.error('Attribution data API failed for', address, ':', error);
+          return null;
+        }),
+        fetchRiskScoringData(address, 'address').catch((error) => {
+          console.error('Risk scoring API failed for', address, ':', error);
+          return null;
+        }),
+        fetchTransactionData(address, 1, 100).catch((error) => {
+          console.error('Transaction data API failed for', address, ':', error);
+          return null;
+        }) // Fetch up to 100 transactions to get accurate count
       ]);
+      console.log('All API calls completed for address:', address);
 
       // Process attribution data
       let entityName = "Unknown Entity";
       let entityType = "wallet";
       let logo = undefined;
+      let entityTypeFromSOT = undefined;
+      let entityTags = [];
       
       if (attributionData?.data && attributionData.data.length > 0) {
         const entity = attributionData.data[0].entity;
         if (entity) {
           entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
-          // Determine entity type based on entity name or other logic
+          
+          // Try to fetch SOT data for this entity to get proper entity_type
+          try {
+            const sotData = await fetchSOTData();
+            if (sotData && Array.isArray(sotData)) {
+              const sotEntry = sotData.find(entry => entry.entity_id === entity);
+              if (sotEntry) {
+                entityTypeFromSOT = sotEntry.entity_type;
+                entityTags = sotEntry.entity_tags || [];
+                console.log('Found SOT data for entity:', entity, {
+                  entity_type: entityTypeFromSOT,
+                  entity_tags: entityTags
+                });
+              }
+            }
+          } catch (error) {
+            console.log('Could not fetch SOT data for entity:', entity, error);
+          }
+          
+          // Determine entity type based on entity name or other logic (fallback)
           if (entity.toLowerCase().includes('exchange') || 
               ['binance', 'coinbase', 'kraken', 'bitfinex', 'huobi', 'okx'].includes(entity.toLowerCase())) {
             entityType = "exchange";
@@ -1043,13 +1108,52 @@ export default function FlowTraceApp() {
       // Process address data
       let balance = "0.00000000 BTC";
       let transactions = 0;
-      console.log('Address data response:', addressData);
+      console.log('Address data response for', address, ':', addressData);
+      console.log('Transaction data response for', address, ':', transactionData);
+      
       if (addressData?.data) {
         balance = addressData.data.balance ? `${(addressData.data.balance / 100000000).toFixed(8)} BTC` : "0.00000000 BTC";
         transactions = addressData.data.tx_count || 0;
-        console.log('Processed address data:', { balance, transactions, tx_count: addressData.data.tx_count });
+        console.log('Processed address data for', address, ':', { 
+          balance, 
+          transactions, 
+          tx_count: addressData.data.tx_count,
+          raw_data: addressData.data 
+        });
       } else {
-        console.log('No address data received, using defaults');
+        console.log('No address data received for', address, ', using defaults');
+      }
+      
+      // Use transaction data to get accurate transaction count if available
+      if (transactionData?.txs && Array.isArray(transactionData.txs)) {
+        const actualTransactionCount = transactionData.txs.length;
+        console.log('✅ FIXED: Actual transaction count from transaction data for', address, ':', actualTransactionCount);
+        console.log('Transaction data structure:', {
+          dataType: typeof transactionData.txs,
+          isArray: Array.isArray(transactionData.txs),
+          length: transactionData.txs.length,
+          sampleTransaction: transactionData.txs[0]
+        });
+        if (actualTransactionCount > 0) {
+          transactions = actualTransactionCount;
+        }
+      } else if (transactionData?.data && Array.isArray(transactionData.data)) {
+        // Fallback to data structure if txs doesn't exist
+        const actualTransactionCount = transactionData.data.length;
+        console.log('Actual transaction count from transaction data (fallback) for', address, ':', actualTransactionCount);
+        if (actualTransactionCount > 0) {
+          transactions = actualTransactionCount;
+        }
+      } else {
+        console.log('No valid transaction data for', address, ':', {
+          hasTransactionData: !!transactionData,
+          hasTxs: !!transactionData?.txs,
+          hasData: !!transactionData?.data,
+          txsType: typeof transactionData?.txs,
+          dataType: typeof transactionData?.data,
+          txsIsArray: Array.isArray(transactionData?.txs),
+          dataIsArray: Array.isArray(transactionData?.data)
+        });
       }
 
       return {
@@ -1058,7 +1162,9 @@ export default function FlowTraceApp() {
         logo,
         riskLevel,
         balance,
-        transactions
+        transactions,
+        entityTypeFromSOT,
+        entityTags
       };
     } catch (error) {
       console.error('Error fetching node data:', error);
@@ -1069,7 +1175,8 @@ export default function FlowTraceApp() {
         logo: undefined,
         riskLevel: "medium",
         balance: "0.00000000 BTC",
-        transactions: 0
+        transactions: 0,
+        availableTransactions: 0
       };
     }
   };
@@ -1094,9 +1201,11 @@ export default function FlowTraceApp() {
       risk: nodeData.riskLevel,
       balance: nodeData.balance,
       transactions: nodeData.transactions,
-      availableTransactions: nodeData.transactions > 0 ? nodeData.transactions : 10, // Use actual transaction count from API, or default to 10 for testing
+      availableTransactions: nodeData.transactions, // Use actual transaction count from API
       logo: nodeData.logo,
       chainLogo: address.startsWith('0x') ? "/logos/eth.png" : "/logos/btc.png",
+      entity_type: nodeData.entityTypeFromSOT,
+      entity_tags: nodeData.entityTags,
       notes: []
     }
     

@@ -7,6 +7,7 @@
     "nodemon": "nodemon",
     "prod": "node -r ts-node/register/transpile-only -r tsconfig-paths/register ./dist/src/server.js",
     "dev": "nodemon",
+    "dev:monitored": "node monitor-server.js & npm run dev",
     "build": "tsc -p tsconfig.prod.json",
     "lint": "eslint --fix",
     "check-types": "tsc --pretty --noEmit",
@@ -18,6 +19,7 @@
     "test:coverage": "export NODE_ENV=testing || SET \"NODE_ENV=testing\" && jest --coverage --detectOpenHandles",
     "test-all": "npm run check-format && npm run check-lint && npm run check-types && npm run test && npm  build",
     "start": "node -r ts-node/register/transpile-only -r tsconfig-paths/register ./dist/src/server.js",
+    "monitor": "node monitor-server.js",
     "postinstall": "tsc"
   },
   "keywords": [],

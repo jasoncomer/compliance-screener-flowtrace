@@ -59,7 +59,9 @@ export class DistributedLockService {
         return null;
       }
       
-      throw error;
+      // Log other errors but don't throw to prevent crashes
+      console.error(`Error acquiring lock ${lockKey}:`, error);
+      return null;
     }
   }
 

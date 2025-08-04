@@ -146,9 +146,9 @@ export function ConnectionEditDialog({
                 <div className="w-2 h-8 bg-primary rounded-full mr-3"></div>
                 <span>Edit Connection Data</span>
               </DialogTitle>
-              <div className="text-sm text-muted-foreground mt-1 ml-5">
+              <DialogDescription className="text-sm text-muted-foreground mt-1 ml-5">
                 Connection: {isReversed ? connection.to : connection.from} → {isReversed ? connection.from : connection.to}
-              </div>
+              </DialogDescription>
             </div>
             <Button
               data-testid="reverse-direction"

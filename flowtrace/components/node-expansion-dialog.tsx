@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect, useCallback } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -49,6 +49,8 @@ interface Transaction {
   risk: "low" | "medium" | "high"
   transactionCount: number
   entityType: "exchange" | "wallet" | "mixer" | "defi" | "service"
+  entity_type?: string // From SOT endpoint
+  entity_tags?: string[] // From SOT endpoint
   logo?: string
   direction: "in" | "out"
 }
@@ -86,6 +88,56 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
   const [sotData, setSotData] = useState<any[]>([]);
   const [sotLoading, setSotLoading] = useState<boolean>(false);
 
+  // Ref to track if transactions have been loaded for the current node
+  const loadedNodeRef = useRef<string | null>(null);
+  
+  // Add a timeout to reset loading state if it gets stuck
+  useEffect(() => {
+    if (loading) {
+      const timeout = setTimeout(() => {
+        console.log('Loading timeout reached, resetting loading state');
+        setLoading(false);
+        setLoadingProgress({current: 0, total: 0, step: 'Loading timed out'});
+        // Reset the loaded node ref so it can be loaded again
+        loadedNodeRef.current = null;
+      }, 10000); // Reduced to 10 second timeout
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [loading]);
+  
+  // Force reset loading state on component mount if it's stuck
+  useEffect(() => {
+    if (loading) {
+      console.log('Force resetting loading state on mount');
+      setLoading(false);
+      setLoadingProgress({current: 0, total: 0, step: 'Force reset'});
+      loadedNodeRef.current = null;
+    }
+  }, []); // Run only on mount
+  
+  // Add a manual reset function
+  const resetLoadingState = () => {
+    console.log('Manually resetting loading state');
+    setLoading(false);
+    setLoadingProgress({current: 0, total: 0, step: 'Reset'});
+    loadedNodeRef.current = null;
+  };
+  
+  // Add keyboard shortcut to reset loading state (Ctrl+R or Cmd+R)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'r') {
+        event.preventDefault();
+        console.log('Keyboard shortcut detected, resetting loading state');
+        resetLoadingState();
+      }
+    };
+    
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Debug node information
   useEffect(() => {
     console.log('NodeExpansionDialog - Node object:', {
@@ -96,6 +148,23 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
     });
   }, [nodeId, node]);
 
+  // Reset loaded node ref when nodeId changes
+  useEffect(() => {
+    if (loadedNodeRef.current !== nodeId) {
+      loadedNodeRef.current = null;
+      setAllTransactions([]);
+      setSelectedTransactions(new Set());
+      // Clear search query when opening a new node
+      setSearchQuery('');
+      // Reset filters to default values
+      setFilterRisk('all');
+      setFilterEntityType('all');
+      setFilterDirection('all');
+      setDateRange({ from: undefined, to: undefined });
+      setAmountRange([0, 100000]);
+    }
+  }, [nodeId]);
+
   // Fetch SOT data for proper entity names
   const fetchSOTDataForNames = useCallback(async () => {
     try {
@@ -103,6 +172,31 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
       const response = await fetchSOTData();
       if (response && Array.isArray(response)) {
         console.log(`Loaded ${response.length} SOT entries for proper names`);
+        
+        // Debug: Check if we have entity_type and entity_tags in the data
+        const sampleEntry = response[0];
+        if (sampleEntry) {
+          console.log('Sample SOT entry:', {
+            entity_id: sampleEntry.entity_id,
+            entity_type: sampleEntry.entity_type,
+            entity_tags: sampleEntry.entity_tags,
+            proper_name: sampleEntry.proper_name,
+            cospend_id: sampleEntry.cospend_id,
+            address: sampleEntry.address
+          });
+        }
+        
+        // Check for Microstrategy specifically
+        const microstrategyEntry = response.find(entry => 
+          entry.proper_name?.toLowerCase().includes('microstrategy') ||
+          entry.entity_id?.toLowerCase().includes('microstrategy')
+        );
+        if (microstrategyEntry) {
+          console.log('Found Microstrategy in SOT data:', microstrategyEntry);
+        } else {
+          console.log('Microstrategy not found in SOT data');
+        }
+        
         setSotData(response);
       }
     } catch (error) {
@@ -117,9 +211,24 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
   const loadTransactions = useCallback(async () => {
     if (node && node.id) {
+      // Prevent double loading by checking if we're already loading or if we've already loaded for this node
+      if (loading) {
+        console.log('Already loading transactions, skipping duplicate request');
+        return;
+      }
+      
+      // Check if we've already loaded transactions for this node
+      if (loadedNodeRef.current === node.id && allTransactions.length > 0) {
+        console.log('Transactions already loaded for this node, skipping reload');
+        return;
+      }
+      
       try {
         setLoading(true);
         console.log('Loading transactions for node:', node.id);
+        
+        // Mark this node as being loaded
+        loadedNodeRef.current = node.id;
         
         // Quick load mode - use mock data immediately
         if (quickLoad) {
@@ -217,42 +326,46 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
           console.log('Unique addresses found:', allAddresses.size);
 
-          // Fetch attribution data for all addresses (with timeout)
-          let addressEntities: any = {};
-          let addressLogos: any = {};
-          if (allAddresses.size > 0) {
-            try {
-              setLoadingProgress({current: 1, total: 2, step: 'Fetching attribution data...'});
-              console.log('Fetching attribution data for addresses:', Array.from(allAddresses).slice(0, 5), '...');
-              const attributionDataPromise = fetchAttributionData(Array.from(allAddresses));
-              const attributionData = await attributionDataPromise as any;
-              console.log('Raw attribution data response:', attributionData);
-              if (attributionData && attributionData.data) {
-                console.log('Attribution data array length:', attributionData.data.length);
-                console.log('Sample attribution item structure:', attributionData.data[0]);
-                attributionData.data.forEach((item: any) => {
-                  console.log('Attribution item:', item);
-                  // Check for both 'address' and 'addr' fields
-                  const address = item.address || item.addr;
-                  if (address && item.entity) {
-                    addressEntities[address] = item.entity;
-                    // Extract logo if available
-                    if (item.logo) {
-                      addressLogos[address] = item.logo;
-                    }
+                        // Fetch attribution data for all addresses (with timeout)
+              let addressEntities: any = {};
+              let addressLogos: any = {};
+              if (allAddresses.size > 0) {
+                try {
+                  setLoadingProgress({current: 1, total: 2, step: 'Fetching attribution data...'});
+                  console.log('Fetching attribution data for addresses:', Array.from(allAddresses).slice(0, 5), '...');
+                  const attributionDataPromise = fetchAttributionData(Array.from(allAddresses));
+                  const attributionData = await attributionDataPromise as any;
+                  console.log('Raw attribution data response:', attributionData);
+                  if (attributionData && attributionData.data) {
+                    console.log('Attribution data array length:', attributionData.data.length);
+                    console.log('Sample attribution item structure:', attributionData.data[0]);
+                    attributionData.data.forEach((item: any) => {
+                      console.log('Attribution item:', item);
+                      // Check for both 'address' and 'addr' fields
+                      const address = item.address || item.addr;
+                      if (address && item.entity) {
+                        // Store the entity name and cospend_id for SOT matching
+                        addressEntities[address] = {
+                          name: item.entity,
+                          cospend_id: item.cospend_id || address
+                        };
+                        // Extract logo if available
+                        if (item.logo) {
+                          addressLogos[address] = item.logo;
+                        }
+                      }
+                    });
                   }
-                });
+                  console.log('Attribution data loaded for', Object.keys(addressEntities).length, 'addresses');
+                  console.log('Address entities mapping:', addressEntities);
+                  console.log('Address logos mapping:', addressLogos);
+                  setLoadingProgress({current: 2, total: 2, step: 'Attribution data loaded'});
+                } catch (error) {
+                  console.error('Error fetching attribution data:', error);
+                  captureApiError(error, 'NodeExpansion-Attribution');
+                  setLoadingProgress({current: 2, total: 2, step: 'Using default attribution data'});
+                }
               }
-              console.log('Attribution data loaded for', Object.keys(addressEntities).length, 'addresses');
-              console.log('Address entities mapping:', addressEntities);
-              console.log('Address logos mapping:', addressLogos);
-              setLoadingProgress({current: 2, total: 2, step: 'Attribution data loaded'});
-            } catch (error) {
-              console.error('Error fetching attribution data:', error);
-              captureApiError(error, 'NodeExpansion-Attribution');
-              setLoadingProgress({current: 2, total: 2, step: 'Using default attribution data'});
-            }
-          }
 
           // Fetch risk data for all addresses using optimized batch API
           let addressRisks: any = {};
@@ -352,19 +465,55 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
             // Handle incoming transactions (money flowing TO the current node)
             if (nodeInOutputs) {
               const inputAddress = tx.inputs?.[0]?.addr || 'Unknown';
-              const rawEntityName = addressEntities[inputAddress] || 'Unknown Entity';
-              const entityId = rawEntityName.toLowerCase().replace(/\s+/g, '_');
+              const entityData = addressEntities[inputAddress];
+              const rawEntityName = entityData?.name || 'Unknown Entity';
+              const entityId = rawEntityName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+              const cospendId = entityData?.cospend_id || inputAddress;
               
               // Use SOT data if available, otherwise fallback to basic formatting
               let entityName = rawEntityName.charAt(0).toUpperCase() + rawEntityName.slice(1);
+              let entityType = 'wallet' as const; // Default fallback
+              let entityTags: string[] = [];
+              
               if (sotData.length > 0) {
+                // Try multiple matching strategies for incoming transactions
                 const sotInfo = sotData.find(sot => 
-                  sot.entity_id === entityId || 
-                  sot.entity_id === rawEntityName ||
-                  sot.proper_name?.toLowerCase() === rawEntityName.toLowerCase()
+                  // Match by proper_name (case insensitive) - this is the primary matching strategy
+                  (sot.proper_name && sot.proper_name.toLowerCase() === rawEntityName.toLowerCase()) ||
+                  // Match by entity_id (case insensitive)
+                  (sot.entity_id && sot.entity_id.toLowerCase() === rawEntityName.toLowerCase()) ||
+                  // Match by entity_id containing the entity name
+                  (sot.entity_id && sot.entity_id.toLowerCase().includes(rawEntityName.toLowerCase())) ||
+                  // Match by proper_name containing the entity name
+                  (sot.proper_name && sot.proper_name.toLowerCase().includes(rawEntityName.toLowerCase()))
                 );
-                if (sotInfo && sotInfo.proper_name) {
-                  entityName = sotInfo.proper_name;
+                if (sotInfo) {
+                  console.log('Found SOT match for incoming entity:', {
+                    rawEntityName,
+                    entityId,
+                    cospendId,
+                    sotEntityId: sotInfo.entity_id,
+                    sotEntityType: sotInfo.entity_type,
+                    sotEntityTags: sotInfo.entity_tags,
+                    sotProperName: sotInfo.proper_name
+                  });
+                  
+                  if (sotInfo.proper_name) {
+                    entityName = sotInfo.proper_name;
+                  }
+                  if (sotInfo.entity_type) {
+                    entityType = sotInfo.entity_type as any;
+                  }
+                  if (sotInfo.entity_tags && Array.isArray(sotInfo.entity_tags)) {
+                    entityTags = sotInfo.entity_tags;
+                  }
+                } else {
+                  console.log('No SOT match found for incoming entity:', {
+                    rawEntityName,
+                    entityId,
+                    cospendId,
+                    availableSotIds: sotData.slice(0, 5).map(s => s.entity_id)
+                  });
                 }
               }
               
@@ -389,7 +538,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               const localLogo = getSafeLogoPath(entityName);
               const logoPath = apiLogo || sotLogo || localLogo;
               
-              processedTransactions.push({
+              const transaction: Transaction = {
                 id: `tx_in_${index}`,
                 address: inputAddress,
                 entityId: entityId,
@@ -402,28 +551,75 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 usdValue: calculateUSDValue(tx.output_amt / 100000000),
                 risk,
                 transactionCount: tx.input_cnt + tx.output_cnt,
-                entityType: 'wallet',
+                entityType: entityType,
+                entity_type: entityType,
+                entity_tags: entityTags,
                 logo: logoPath,
-                direction: 'in',
+                direction: 'in' as const,
+              };
+              
+              console.log('Created incoming transaction with SOT data:', {
+                entityName: transaction.entityName,
+                entityType: transaction.entityType,
+                entity_type: transaction.entity_type,
+                entity_tags: transaction.entity_tags
               });
+              
+              processedTransactions.push(transaction);
             }
             
             // Handle outgoing transactions (money flowing FROM the current node)
             if (nodeInInputs) {
               const outputAddress = tx.outputs?.find((out: any) => out.addr !== nodeAddress)?.addr || 'Unknown';
-              const rawEntityName = addressEntities[outputAddress] || 'Unknown Entity';
-              const entityId = rawEntityName.toLowerCase().replace(/\s+/g, '_');
+              const entityData = addressEntities[outputAddress];
+              const rawEntityName = entityData?.name || 'Unknown Entity';
+              const entityId = rawEntityName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+              const cospendId = entityData?.cospend_id || outputAddress;
               
               // Use SOT data if available, otherwise fallback to basic formatting
               let entityName = rawEntityName.charAt(0).toUpperCase() + rawEntityName.slice(1);
+              let entityType = 'wallet' as const; // Default fallback
+              let entityTags: string[] = [];
+              
               if (sotData.length > 0) {
+                // Try multiple matching strategies for outgoing transactions
                 const sotInfo = sotData.find(sot => 
-                  sot.entity_id === entityId || 
-                  sot.entity_id === rawEntityName ||
-                  sot.proper_name?.toLowerCase() === rawEntityName.toLowerCase()
+                  // Match by proper_name (case insensitive) - this is the primary matching strategy
+                  (sot.proper_name && sot.proper_name.toLowerCase() === rawEntityName.toLowerCase()) ||
+                  // Match by entity_id (case insensitive)
+                  (sot.entity_id && sot.entity_id.toLowerCase() === rawEntityName.toLowerCase()) ||
+                  // Match by entity_id containing the entity name
+                  (sot.entity_id && sot.entity_id.toLowerCase().includes(rawEntityName.toLowerCase())) ||
+                  // Match by proper_name containing the entity name
+                  (sot.proper_name && sot.proper_name.toLowerCase().includes(rawEntityName.toLowerCase()))
                 );
-                if (sotInfo && sotInfo.proper_name) {
-                  entityName = sotInfo.proper_name;
+                if (sotInfo) {
+                  console.log('Found SOT match for outgoing entity:', {
+                    rawEntityName,
+                    entityId,
+                    cospendId,
+                    sotEntityId: sotInfo.entity_id,
+                    sotEntityType: sotInfo.entity_type,
+                    sotEntityTags: sotInfo.entity_tags,
+                    sotProperName: sotInfo.proper_name
+                  });
+                  
+                  if (sotInfo.proper_name) {
+                    entityName = sotInfo.proper_name;
+                  }
+                  if (sotInfo.entity_type) {
+                    entityType = sotInfo.entity_type as any;
+                  }
+                  if (sotInfo.entity_tags && Array.isArray(sotInfo.entity_tags)) {
+                    entityTags = sotInfo.entity_tags;
+                  }
+                } else {
+                  console.log('No SOT match found for outgoing entity:', {
+                    rawEntityName,
+                    entityId,
+                    cospendId,
+                    availableSotIds: sotData.slice(0, 5).map(s => s.entity_id)
+                  });
                 }
               }
               
@@ -448,23 +644,34 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               const localLogo = getSafeLogoPath(entityName);
               const logoPath = apiLogo || sotLogo || localLogo;
               
-                             processedTransactions.push({
-                 id: `tx_out_${index}`,
-                 address: outputAddress,
-                 entityId: entityId,
-                 entityName: entityName,
-                 amount: (tx.output_amt / 100000000).toFixed(8),
-                 currency: 'BTC',
-                 date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
-                 txHash: tx.txid,
-                 txId: tx.txid,
-                 usdValue: calculateUSDValue(tx.output_amt / 100000000),
-                 risk,
-                 transactionCount: tx.input_cnt + tx.output_cnt,
-                 entityType: 'wallet',
-                 logo: logoPath,
-                 direction: 'out',
-               });
+              const transaction: Transaction = {
+                id: `tx_out_${index}`,
+                address: outputAddress,
+                entityId: entityId,
+                entityName: entityName,
+                amount: (tx.output_amt / 100000000).toFixed(8),
+                currency: 'BTC',
+                date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
+                txHash: tx.txid,
+                txId: tx.txid,
+                usdValue: calculateUSDValue(tx.output_amt / 100000000),
+                risk,
+                transactionCount: tx.input_cnt + tx.output_cnt,
+                entityType: entityType,
+                entity_type: entityType,
+                entity_tags: entityTags,
+                logo: logoPath,
+                direction: 'out' as const,
+              };
+              
+              console.log('Created outgoing transaction with SOT data:', {
+                entityName: transaction.entityName,
+                entityType: transaction.entityType,
+                entity_type: transaction.entity_type,
+                entity_tags: transaction.entity_tags
+              });
+              
+              processedTransactions.push(transaction);
             }
             
             // Debug logging for direction logic
@@ -519,11 +726,595 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
         setLoading(false);
       }
     }
-  }, [node, quickLoad, skipRiskData]);
+  }, [node?.id, node?.address, quickLoad, skipRiskData, onUpdateNodeTransactions, nodeId, sotData]);
 
   useEffect(() => {
-    loadTransactions();
-  }, [loadTransactions]);
+    console.log('useEffect triggered with dependencies:', {
+      nodeId: node?.id,
+      nodeAddress: node?.address,
+      quickLoad,
+      skipRiskData,
+      loadedNodeRef: loadedNodeRef.current
+    });
+    
+    // Prevent multiple loads for the same node
+    if (node && node.id && loadedNodeRef.current !== node.id && !loading) {
+      console.log('Starting transaction load for node:', node.id);
+      
+      // Call loadTransactions directly without adding it as a dependency
+      const loadTransactionsForNode = async () => {
+        if (node && node.id) {
+          // Prevent double loading by checking if we're already loading or if we've already loaded for this node
+          if (loading) {
+            console.log('Already loading transactions, skipping duplicate request');
+            return;
+          }
+          
+          // Check if we've already loaded transactions for this node
+          if (loadedNodeRef.current === node.id && allTransactions.length > 0) {
+            console.log('Transactions already loaded for this node, skipping reload');
+            return;
+          }
+          
+          try {
+            setLoading(true);
+            console.log('Loading transactions for node:', node.id);
+            
+            // Mark this node as being loaded
+            loadedNodeRef.current = node.id;
+            
+            // Quick load mode - use mock data immediately
+            if (quickLoad) {
+              console.log('Using Quick Load mode - loading mock data');
+              setLoadingProgress({current: 0, total: 1, step: 'Loading mock data...'});
+              const mockTransactions = [
+                {
+                  id: 'mock-tx-1',
+                  address: 'mock-address-1',
+                  entityId: 'mock_entity_1',
+                  entityName: 'Mock Exchange',
+                  amount: '0.50000000',
+                  currency: 'BTC',
+                  date: new Date().toISOString().split('T')[0],
+                  txHash: 'mock-hash-1',
+                  txId: 'mock-hash-1',
+                  usdValue: formatUSD(0.5 * 30000), // $15,000.00
+                  risk: 'medium' as const,
+                  transactionCount: 2,
+                  entityType: 'exchange' as const,
+                  logo: undefined,
+                  direction: 'in' as const,
+                },
+                {
+                  id: 'mock-tx-2',
+                  address: 'mock-address-2',
+                  entityId: 'mock_entity_2',
+                  entityName: 'Mock Wallet',
+                  amount: '0.25000000',
+                  currency: 'BTC',
+                  date: new Date().toISOString().split('T')[0],
+                  txHash: 'mock-hash-2',
+                  txId: 'mock-hash-2',
+                  usdValue: formatUSD(0.25 * 30000), // $7,500.00
+                  risk: 'low' as const,
+                  transactionCount: 1,
+                  entityType: 'wallet' as const,
+                  logo: undefined,
+                  direction: 'out' as const,
+                }
+              ];
+              setAllTransactions(mockTransactions);
+              setLoadingProgress({current: 1, total: 1, step: 'Mock data loaded'});
+              setLoading(false);
+              
+              // Update node's availableTransactions for mock data
+              if (node && (node.availableTransactions === 0 || node.availableTransactions === undefined)) {
+                onUpdateNodeTransactions?.(nodeId, mockTransactions.length);
+              }
+              return;
+            }
+            
+            // Try to fetch transaction data with fallback
+            let transactionData: any = null;
+            try {
+              console.log('Loading real transaction data (not Quick Load)');
+              setLoadingProgress({current: 0, total: 1, step: 'Fetching transaction data...'});
+              // Use node.address instead of node.id for API calls
+              const addressToFetch = node.address || node.id.replace('searched_', '');
+              console.log('Fetching transactions for address:', addressToFetch);
+              
+              // Add timeout to prevent hanging
+              const transactionDataPromise = fetchTransactionData(addressToFetch, 1, 50);
+              const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Transaction data fetch timeout')), 10000)
+              );
+              
+              transactionData = await Promise.race([transactionDataPromise, timeoutPromise]) as any;
+              setLoadingProgress({current: 1, total: 1, step: 'Transaction data loaded successfully'});
+            } catch (error) {
+              console.log('Transaction data fetch failed, using fallback data');
+              captureApiError(error, 'NodeExpansion-Transactions');
+              // Use fallback data structure
+              transactionData = {
+                txs: [
+                  {
+                    txid: 'fallback-tx-1',
+                    inputs: [{ addr: 'fallback-input' }],
+                    outputs: [{ addr: node.id }],
+                    output_amt: 100000000, // 1 BTC
+                    block_date: new Date().toISOString().split('T')[0],
+                    input_cnt: 1,
+                    output_cnt: 1
+                  }
+                ]
+              };
+              setLoadingProgress({current: 1, total: 1, step: 'Using fallback transaction data'});
+            }
+            
+            if (transactionData && transactionData.txs) {
+              console.log('Found transactions:', transactionData.txs.length);
+              console.log('Transaction data structure:', transactionData);
+              
+              // Collect all unique addresses from inputs and outputs
+              const allAddresses = new Set<string>();
+              transactionData.txs.forEach((tx: any) => {
+                tx.inputs?.forEach((input: any) => {
+                  if (input.addr) allAddresses.add(input.addr);
+                });
+                tx.outputs?.forEach((output: any) => {
+                  if (output.addr) allAddresses.add(output.addr);
+                });
+              });
+
+              console.log('Unique addresses found:', allAddresses.size);
+
+              // Fetch attribution data for all addresses (with timeout)
+              let addressEntities: any = {};
+              let addressLogos: any = {};
+              console.log('About to fetch attribution data for', allAddresses.size, 'addresses');
+              
+              if (allAddresses.size > 0) {
+                try {
+                  setLoadingProgress({current: 1, total: 2, step: 'Fetching attribution data...'});
+                  console.log('Fetching attribution data for addresses:', Array.from(allAddresses).slice(0, 5), '...');
+                  
+                  // Add timeout to prevent hanging
+                  const attributionDataPromise = fetchAttributionData(Array.from(allAddresses));
+                  const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Attribution data fetch timeout')), 15000)
+                  );
+                  
+                  const attributionData = await Promise.race([attributionDataPromise, timeoutPromise]) as any;
+                  console.log('Raw attribution data response:', attributionData);
+                  if (attributionData && attributionData.data) {
+                    console.log('Attribution data array length:', attributionData.data.length);
+                    console.log('Sample attribution item structure:', attributionData.data[0]);
+                    attributionData.data.forEach((item: any) => {
+                      console.log('Attribution item:', item);
+                      // Check for both 'address' and 'addr' fields
+                      const address = item.address || item.addr;
+                      if (address && item.entity) {
+                        // Store the entity name and cospend_id for SOT matching
+                        addressEntities[address] = {
+                          name: item.entity,
+                          cospend_id: item.cospend_id || address
+                        };
+                        // Extract logo if available
+                        if (item.logo) {
+                          addressLogos[address] = item.logo;
+                        }
+                      }
+                    });
+                  }
+                  console.log('Attribution data loaded for', Object.keys(addressEntities).length, 'addresses');
+                  console.log('Address entities mapping:', addressEntities);
+                  console.log('Address logos mapping:', addressLogos);
+                  setLoadingProgress({current: 2, total: 2, step: 'Attribution data loaded'});
+                } catch (error) {
+                  console.error('Error fetching attribution data:', error);
+                  captureApiError(error, 'NodeExpansion-Attribution');
+                  setLoadingProgress({current: 2, total: 2, step: 'Using default attribution data'});
+                }
+              }
+
+              // Fetch risk data for all addresses using optimized batch API
+              let addressRisks: any = {};
+              const addressArray = Array.from(allAddresses);
+              
+              if (addressArray.length > 0 && !skipRiskData) {
+                // Performance optimization: limit addresses for risk scoring
+                const maxAddressesForRisk = 30; // Reasonable limit to prevent API overload
+                
+                if (addressArray.length > maxAddressesForRisk) {
+                  console.log(`Too many addresses (${addressArray.length}) for risk data fetching, using default values`);
+                  setLoadingProgress({current: 1, total: 1, step: 'Using default risk values (too many addresses)...'});
+                  addressArray.forEach(address => {
+                    addressRisks[address] = 'low';
+                  });
+                } else {
+                  try {
+                    setLoadingProgress({current: 0, total: 1, step: 'Fetching risk data...'});
+                    
+                    // Temporarily skip risk data fetching due to API issues
+                    console.log('Skipping risk data fetching due to API endpoint issues');
+                    addressArray.forEach(address => {
+                      addressRisks[address] = 'low';
+                    });
+                    setLoadingProgress({current: 1, total: 1, step: 'Using default risk values'});
+                    
+                    /* Commented out due to API endpoint issues
+                    // Use the new batch API for better performance
+                    const riskData = await fetchBatchRiskScoringData(addressArray) as any;
+                    
+                    if (riskData && riskData.success && riskData.data) {
+                      // Process batch response
+                      riskData.data.forEach((item: any) => {
+                        const address = item.address || item.addr;
+                        if (address && item.overallRisk !== undefined) {
+                          const overallRisk = item.overallRisk;
+                          addressRisks[address] = overallRisk > 0.4 ? 'high' : overallRisk > 0.2 ? 'medium' : 'low';
+                        }
+                      });
+                      
+                      console.log(`Risk data loaded for ${Object.keys(addressRisks).length} addresses`);
+                    } else {
+                      // Fallback to individual calls if batch API fails
+                      console.log('Batch risk API failed, falling back to individual calls');
+                      const batchSize = 3; // Smaller batch size for individual calls
+                      const totalBatches = Math.ceil(addressArray.length / batchSize);
+                      
+                      for (let i = 0; i < addressArray.length; i += batchSize) {
+                        const batch = addressArray.slice(i, i + batchSize);
+                        const batchPromises = batch.map(async (address) => {
+                          try {
+                            const individualRiskData = await fetchRiskScoringData(address, 'address') as any;
+                            if (individualRiskData && individualRiskData.success && individualRiskData.data) {
+                              const overallRisk = individualRiskData.data.overallRisk;
+                              return { address, risk: overallRisk > 0.4 ? 'high' : overallRisk > 0.2 ? 'medium' : 'low' };
+                            }
+                            return { address, risk: 'low' };
+                          } catch (error) {
+                            console.error(`Error fetching risk data for ${address}:`, error);
+                            return { address, risk: 'low' };
+                          }
+                        });
+                        
+                        const batchResults = await Promise.all(batchPromises);
+                        batchResults.forEach(({ address, risk }) => {
+                          addressRisks[address] = risk;
+                        });
+                        
+                        setLoadingProgress({current: Math.floor(i / batchSize) + 1, total: totalBatches, step: `Processing batch ${Math.floor(i / batchSize) + 1}/${totalBatches}`});
+                      }
+                    }
+                    */
+                    
+                    setLoadingProgress({current: 1, total: 1, step: 'Risk data loaded'});
+                  } catch (error) {
+                    console.log('Risk data fetching failed, using default values');
+                    captureApiError(error, 'NodeExpansion-RiskData');
+                    // Set default risk values for all addresses
+                    addressArray.forEach(address => {
+                      addressRisks[address] = 'low';
+                    });
+                    setLoadingProgress({current: 1, total: 1, step: 'Using default risk values'});
+                  }
+                }
+              }
+
+              // Process transactions to handle both incoming and outgoing
+              const processedTransactions: Transaction[] = [];
+              
+              // Use the actual address for transaction processing
+              const nodeAddress = node.address || node.id.replace('searched_', '');
+              
+              console.log('Processing transactions for node:', nodeAddress);
+              console.log('Total transactions from API:', transactionData.txs.length);
+              
+              // Track unique transactions by txid to avoid duplicates
+              const processedTxIds = new Set();
+              
+              transactionData.txs.forEach((tx: any, index: number) => {
+                const nodeInInputs = tx.inputs?.some((inp: any) => inp.addr === nodeAddress);
+                const nodeInOutputs = tx.outputs?.some((out: any) => out.addr === nodeAddress);
+
+                // Debug logging for direction logic
+                console.log(`Transaction ${index}:`, {
+                  nodeId: node.id,
+                  nodeAddress,
+                  nodeInInputs,
+                  nodeInOutputs,
+                  allOutputs: tx.outputs?.map((out: any) => out.addr),
+                  allInputs: tx.inputs?.map((inp: any) => inp.addr)
+                });
+
+                // Only process transactions where the node is actually involved
+                if (!nodeInInputs && !nodeInOutputs) {
+                  console.log(`Skipping transaction ${index} - node not involved`);
+                  return;
+                }
+                
+                // Skip if we've already processed this transaction
+                if (processedTxIds.has(tx.txid)) {
+                  console.log(`Skipping transaction ${index} - already processed txid: ${tx.txid}`);
+                  return;
+                }
+                
+                console.log(`Processing transaction ${index} - node is involved, txid: ${tx.txid}`);
+                processedTxIds.add(tx.txid);
+
+                // Process the transaction as a single entry
+                if (nodeInOutputs) {
+                  // This is an incoming transaction (node is receiving)
+                  const inputAddress = tx.inputs?.[0]?.addr; // Use first input as representative
+                  if (inputAddress && inputAddress !== nodeAddress) {
+                      const entityData = addressEntities[inputAddress];
+                      const entityId = entityData?.name?.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || `unknown_${inputAddress.slice(0, 8)}`;
+                      const entityName = entityData?.name || `Unknown Entity (${inputAddress.slice(0, 8)}...)`;
+                      const cospendId = entityData?.cospend_id || inputAddress;
+                      const risk = addressRisks[inputAddress] || 'low';
+                      
+                      // Use SOT data if available, otherwise fallback to basic formatting
+                      let finalEntityName = entityName;
+                      let entityType = 'wallet' as const; // Default fallback
+                      let entityTags: string[] = [];
+                      
+                      if (sotData.length > 0) {
+                        // Try multiple matching strategies for incoming transactions
+                        const sotInfo = sotData.find(sot => 
+                          // Match by proper_name (case insensitive) - this is the primary matching strategy
+                          (sot.proper_name && sot.proper_name.toLowerCase() === entityName.toLowerCase()) ||
+                          // Match by entity_id (case insensitive)
+                          (sot.entity_id && sot.entity_id.toLowerCase() === entityName.toLowerCase()) ||
+                          // Match by entity_id containing the entity name
+                          (sot.entity_id && sot.entity_id.toLowerCase().includes(entityName.toLowerCase())) ||
+                          // Match by proper_name containing the entity name
+                          (sot.proper_name && sot.proper_name.toLowerCase().includes(entityName.toLowerCase()))
+                        );
+                        
+                        // Debug: Log what we're trying to match
+                        if (!sotInfo) {
+                          console.log('Debug: Trying to match incoming address:', {
+                            inputAddress,
+                            entityId,
+                            entityName,
+                            addressPrefix: inputAddress.slice(0, 8),
+                            expectedEntityId: `unknown_${inputAddress.slice(0, 8)}`,
+                            availableSotIds: sotData.slice(0, 10).map(s => ({ 
+                              entity_id: s.entity_id, 
+                              proper_name: s.proper_name,
+                              address: s.address,
+                              cospend_id: s.cospend_id
+                            }))
+                          });
+                          
+                          // Also log a few sample SOT entries to see the structure
+                          console.log('Sample SOT entries (full):', JSON.stringify(sotData.slice(0, 3), null, 2));
+                          
+                          // Also log individual entries for better visibility
+                          sotData.slice(0, 3).forEach((entry, index) => {
+                            console.log(`SOT Entry ${index + 1}:`, {
+                              entity_id: entry.entity_id,
+                              proper_name: entry.proper_name,
+                              entity_type: entry.entity_type,
+                              address: entry.address,
+                              cospend_id: entry.cospend_id,
+                              allKeys: Object.keys(entry)
+                            });
+                          });
+                          
+                          // Check if any SOT entries have matching cospend_id
+                          const matchingCospend = sotData.find(s => s.cospend_id === inputAddress);
+                          if (matchingCospend) {
+                            console.log('Found matching cospend_id entry:', matchingCospend);
+                          } else {
+                            console.log('No matching cospend_id found for address:', inputAddress);
+                          }
+                          
+                          // Check if the Microstrategy address is in the SOT data
+                          const microstrategyAddress = '39PRJa1EbEsLAJdu2f526PAD6T9RhMVGw9';
+                          const microstrategyInSot = sotData.find(s => 
+                            s.cospend_id === microstrategyAddress || 
+                            s.address === microstrategyAddress ||
+                            s.entity_id?.includes('microstrategy') ||
+                            s.proper_name?.toLowerCase().includes('microstrategy')
+                          );
+                          if (microstrategyInSot) {
+                            console.log('Found Microstrategy in SOT data:', microstrategyInSot);
+                          } else {
+                            console.log('Microstrategy address not found in SOT data');
+                          }
+                        }
+                        if (sotInfo) {
+                          console.log('Found SOT match for incoming transaction:', {
+                            entityName,
+                            entityId,
+                            sotEntityId: sotInfo.entity_id,
+                            sotEntityType: sotInfo.entity_type,
+                            sotEntityTags: sotInfo.entity_tags,
+                            sotProperName: sotInfo.proper_name
+                          });
+                          
+                          if (sotInfo.proper_name) {
+                            finalEntityName = sotInfo.proper_name;
+                          }
+                          if (sotInfo.entity_type) {
+                            entityType = sotInfo.entity_type as any;
+                          }
+                          if (sotInfo.entity_tags && Array.isArray(sotInfo.entity_tags)) {
+                            entityTags = sotInfo.entity_tags;
+                          }
+                        } else {
+                          console.log('No SOT match found for incoming transaction:', {
+                            entityName,
+                            entityId,
+                            availableSotIds: sotData.slice(0, 5).map(s => s.entity_id)
+                          });
+                        }
+                      }
+                      
+                      // Get logo for this address
+                      const apiLogo = addressLogos[inputAddress];
+                      const sotLogo = sotData.find(sot => sot.address === inputAddress)?.logo;
+                      const localLogo = getSafeLogoPath(finalEntityName);
+                      const logoPath = apiLogo || sotLogo || localLogo;
+                      
+                      processedTransactions.push({
+                        id: `tx_in_${index}`,
+                        address: inputAddress,
+                        entityId: entityId,
+                        entityName: finalEntityName,
+                        amount: (tx.output_amt / 100000000).toFixed(8),
+                        currency: 'BTC',
+                        date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
+                        txHash: tx.txid,
+                        txId: tx.txid,
+                        usdValue: calculateUSDValue(tx.output_amt / 100000000),
+                        risk,
+                        transactionCount: tx.input_cnt + tx.output_cnt,
+                        entityType: entityType,
+                        entity_type: entityType,
+                        entity_tags: entityTags,
+                        logo: logoPath,
+                        direction: 'in' as const,
+                      });
+                      console.log(`Added incoming transaction: ${inputAddress} -> ${nodeAddress}`);
+                    }
+                }
+
+                // Process outputs (outgoing transactions) - only if node is in inputs
+                if (tx.outputs && nodeInInputs) {
+                  // Use first output as representative for the transaction
+                  const outputAddress = tx.outputs[0]?.addr;
+                  if (outputAddress && outputAddress !== nodeAddress) {
+                      const entityData = addressEntities[outputAddress];
+                      const entityId = entityData?.name?.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || `unknown_${outputAddress.slice(0, 8)}`;
+                      const entityName = entityData?.name || `Unknown Entity (${outputAddress.slice(0, 8)}...)`;
+                      const cospendId = entityData?.cospend_id || outputAddress;
+                      const risk = addressRisks[outputAddress] || 'low';
+                      
+                      // Use SOT data if available, otherwise fallback to basic formatting
+                      let finalEntityName = entityName;
+                      let entityType = 'wallet' as const; // Default fallback
+                      let entityTags: string[] = [];
+                      
+                      if (sotData.length > 0) {
+                        // Try multiple matching strategies for outgoing transactions
+                        const sotInfo = sotData.find(sot => 
+                          // Match by proper_name (case insensitive) - this is the primary matching strategy
+                          (sot.proper_name && sot.proper_name.toLowerCase() === entityName.toLowerCase()) ||
+                          // Match by entity_id (case insensitive)
+                          (sot.entity_id && sot.entity_id.toLowerCase() === entityName.toLowerCase()) ||
+                          // Match by entity_id containing the entity name
+                          (sot.entity_id && sot.entity_id.toLowerCase().includes(entityName.toLowerCase())) ||
+                          // Match by proper_name containing the entity name
+                          (sot.proper_name && sot.proper_name.toLowerCase().includes(entityName.toLowerCase()))
+                        );
+                        if (sotInfo) {
+                          console.log('Found SOT match for outgoing transaction:', {
+                            entityName,
+                            entityId,
+                            sotEntityId: sotInfo.entity_id,
+                            sotEntityType: sotInfo.entity_type,
+                            sotEntityTags: sotInfo.entity_tags,
+                            sotProperName: sotInfo.proper_name
+                          });
+                          
+                          if (sotInfo.proper_name) {
+                            finalEntityName = sotInfo.proper_name;
+                          }
+                          if (sotInfo.entity_type) {
+                            entityType = sotInfo.entity_type as any;
+                          }
+                          if (sotInfo.entity_tags && Array.isArray(sotInfo.entity_tags)) {
+                            entityTags = sotInfo.entity_tags;
+                          }
+                        } else {
+                          console.log('No SOT match found for outgoing transaction:', {
+                            entityName,
+                            entityId,
+                            availableSotIds: sotData.slice(0, 5).map(s => s.entity_id)
+                          });
+                        }
+                      }
+                      
+                      // Get logo for this address
+                      const apiLogo = addressLogos[outputAddress];
+                      const sotLogo = sotData.find(sot => sot.address === outputAddress)?.logo;
+                      const localLogo = getSafeLogoPath(finalEntityName);
+                      const logoPath = apiLogo || sotLogo || localLogo;
+                      
+                      processedTransactions.push({
+                        id: `tx_out_${index}`,
+                        address: outputAddress,
+                        entityId: entityId,
+                        entityName: finalEntityName,
+                        amount: (tx.output_amt / 100000000).toFixed(8),
+                        currency: 'BTC',
+                        date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
+                        txHash: tx.txid,
+                        txId: tx.txid,
+                        usdValue: calculateUSDValue(tx.output_amt / 100000000),
+                        risk,
+                        transactionCount: tx.input_cnt + tx.output_cnt,
+                        entityType: entityType,
+                        entity_type: entityType,
+                        entity_tags: entityTags,
+                        logo: logoPath,
+                        direction: 'out' as const,
+                      });
+                      console.log(`Added outgoing transaction: ${nodeAddress} -> ${outputAddress}`);
+                    }
+                }
+              });
+              
+              console.log('Processed transactions:', processedTransactions.length);
+              console.log('Sample processed transactions:', processedTransactions.slice(0, 3));
+              setAllTransactions(processedTransactions);
+              
+              // Update the node's availableTransactions property if it's currently 0
+              if (node && (node.availableTransactions === 0 || node.availableTransactions === undefined) && processedTransactions.length > 0) {
+                console.log(`Updating node ${node.id} availableTransactions from ${node.availableTransactions} to ${processedTransactions.length}`);
+                onUpdateNodeTransactions?.(nodeId, processedTransactions.length);
+              }
+            } else {
+              console.log('No transactions found');
+              setAllTransactions([]);
+              
+              // Update node's availableTransactions to 0 if no transactions found
+              if (node && node.availableTransactions !== 0) {
+                onUpdateNodeTransactions?.(nodeId, 0);
+              }
+            }
+          } catch (error) {
+            console.error('Error loading transactions:', error);
+            captureApiError(error, 'NodeExpansion');
+            
+            // Provide more specific error information
+            let errorMessage = "Failed to load transactions";
+            if (axios.isAxiosError(error)) {
+              if (error.code === 'ECONNABORTED') {
+                errorMessage = "Request timed out";
+              } else if (error.response?.status === 404) {
+                errorMessage = "Address not found";
+              } else if (error.response?.status && error.response.status >= 500) {
+                errorMessage = "Server error";
+              } else {
+                errorMessage = `API error (${error.response?.status || 'Unknown'})`;
+              }
+            }
+            
+            console.log('Error details:', errorMessage);
+            setAllTransactions([]);
+          } finally {
+            setLoading(false);
+          }
+        }
+      };
+      
+      loadTransactionsForNode();
+    }
+  }, [node?.id, node?.address, quickLoad, skipRiskData, sotData]);
 
   // Fetch SOT data on component mount (only once)
   useEffect(() => {
@@ -591,6 +1382,28 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
   // Filter and sort transactions
   const filteredTransactions = useMemo(() => {
+    console.log('Filtering transactions:', {
+      allTransactionsLength: allTransactions.length,
+      searchQuery: searchQuery || '(empty)',
+      filterRisk,
+      filterEntityType,
+      filterDirection,
+      dateRange,
+      amountRange
+    });
+    
+    // If no search query and all filters are default, show all transactions
+    const isDefaultFilters = !searchQuery && 
+      filterRisk === 'all' && 
+      filterEntityType === 'all' && 
+      filterDirection === 'all' &&
+      (!dateRange.from && !dateRange.to) &&
+      amountRange[0] === 0 && amountRange[1] === 100000;
+    
+    if (isDefaultFilters) {
+      console.log('Using default filters - showing all transactions');
+    }
+    
     const filtered = allTransactions.filter((tx) => {
       const matchesSearch =
         tx.entityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -608,6 +1421,20 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
       const txAmount = Number.parseFloat(tx.usdValue.replace(/[$,]/g, ''))
       const matchesAmountRange = txAmount >= amountRange[0] && txAmount <= amountRange[1]
+
+      // Debug: Log why transactions are being filtered out
+      if (!matchesSearch || !matchesRisk || !matchesEntityType || !matchesDirection || !matchesDateRange || !matchesAmountRange) {
+        console.log('Transaction filtered out:', {
+          txId: tx.txId,
+          entityName: tx.entityName,
+          matchesSearch,
+          matchesRisk,
+          matchesEntityType,
+          matchesDirection,
+          matchesDateRange,
+          matchesAmountRange
+        });
+      }
 
       // Don't filter out processed transactions - show them but mark as processed
       return matchesSearch && matchesRisk && matchesEntityType && matchesDirection && matchesDateRange && matchesAmountRange
@@ -1226,7 +2053,9 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                       </div>
 
                       <div className="col-span-1">
-                        <Badge className={`text-xs border ${getEntityTypeColor(tx.entityType)}`}>{tx.entityType}</Badge>
+                        <Badge className={`text-xs border ${getEntityTypeColor(tx.entity_type || tx.entityType)}`}>
+                          {tx.entity_type || tx.entityType}
+                        </Badge>
                       </div>
 
                       <div className="col-span-1">
@@ -1277,6 +2106,15 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                   className="border-border bg-background text-foreground hover:text-foreground hover:bg-accent"
                 >
                   Load Mock Data
+                </Button>
+              )}
+              {loading && (
+                <Button
+                  variant="outline"
+                  onClick={resetLoadingState}
+                  className="border-border bg-background text-foreground hover:text-foreground hover:bg-accent"
+                >
+                  Reset Loading
                 </Button>
               )}
             </div>

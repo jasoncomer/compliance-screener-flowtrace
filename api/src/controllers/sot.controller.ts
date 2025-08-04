@@ -5,8 +5,38 @@ import { CronJobsService } from '../services/cronJobs.service';
 
 export const getLatestSOTs = async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await sotService.fetchAllSOT();
-    res.json(result);
+    // Get the raw SOT documents and transform them to SOTV2 format
+    const rawSOTs = await sotService.fetchAllSOT();
+    
+    // Transform to SOTV2 format with entity_tags array
+    const transformedSOTs = rawSOTs.map(sot => ({
+      ...sot,
+      entity_tags: [
+        sot.entity_tag1,
+        sot.entity_tag2,
+        sot.entity_tag3,
+        sot.entity_tag4,
+        sot.entity_tag5,
+        sot.entity_tag6,
+        sot.entity_tag7,
+      ].filter(Boolean),
+      associated_countries: [
+        sot.associate_country_1,
+        sot.associate_country_2,
+        sot.associate_country_3,
+        sot.associate_country_4,
+        sot.associate_country_5,
+        sot.associate_country_6,
+      ].filter(Boolean),
+      social_media_profiles: [
+        sot.social_media_profile,
+        sot.social_media_profile_2,
+        sot.social_media_profile_3,
+        sot.social_media_profile_4,
+      ].filter(Boolean),
+    }));
+    
+    res.json(transformedSOTs);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

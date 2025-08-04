@@ -28,6 +28,8 @@ interface Node {
   availableTransactions?: number
   isPassThrough?: boolean
   isUserDefinedLabel?: boolean // For user-defined label functionality
+  entity_type?: string // From SOT endpoint
+  entity_tags?: string[] // From SOT endpoint
   notes?: Array<{
     id: string
     userId: string
@@ -556,41 +558,64 @@ export function NetworkGraph({
     console.log('🔍 Current nodes before deletion:', nodes.length)
     console.log('🔍 Current connections before deletion:', connections.length)
     
-    // Remove the node
+    // Find all child nodes that were created from this node (recursively)
+    const getAllChildNodes = (parentId: string): string[] => {
+      const directChildren = nodes.filter(node => node.id.startsWith(`${parentId}_child_`))
+      const allChildren: string[] = []
+      
+      directChildren.forEach(child => {
+        allChildren.push(child.id)
+        // Recursively get children of this child
+        const grandChildren = getAllChildNodes(child.id)
+        allChildren.push(...grandChildren)
+      })
+      
+      return allChildren
+    }
+    
+    const childNodes = getAllChildNodes(nodeId)
+    console.log('🔍 Found child nodes to delete:', childNodes)
+    
+    // Collect all node IDs to delete (parent + all descendants)
+    const nodesToDelete = new Set([nodeId, ...childNodes])
+    
+    // Remove the node and all its descendant nodes
     setNodes((prev) => {
-      const newNodes = prev.filter((node) => node.id !== nodeId)
-      console.log('✅ Node deleted, remaining nodes:', newNodes.length)
+      const newNodes = prev.filter((node) => !nodesToDelete.has(node.id))
+      console.log('✅ Nodes deleted, remaining nodes:', newNodes.length)
       console.log('🔍 Remaining node IDs:', newNodes.map(n => n.id))
       return newNodes
     })
     
-    // Remove connected connections
+    // Remove all connections involving the deleted node or any of its descendants
     setConnections((prev) => {
-      const newConnections = prev.filter((conn) => conn.from !== nodeId && conn.to !== nodeId)
+      const newConnections = prev.filter((conn) => 
+        !nodesToDelete.has(conn.from) && !nodesToDelete.has(conn.to)
+      )
       console.log('🔍 Connections after deletion:', newConnections.length)
       return newConnections
     })
     
     // Remove connected drawing elements
     setDrawingElements((prev) => {
-      const newElements = prev.filter((element) => element.connectedNodeId !== nodeId)
+      const newElements = prev.filter((element) => !nodesToDelete.has(element.connectedNodeId || ''))
       console.log('🔍 Drawing elements after deletion:', newElements.length)
       return newElements
     })
     
-    // Clear selection if the deleted node was selected
+    // Clear selection if the deleted node or any of its descendants was selected
     setSelectedNode((current) => {
-      if (current === nodeId) {
-        console.log('🔍 Clearing selection for deleted node')
+      if (current && nodesToDelete.has(current)) {
+        console.log('🔍 Clearing selection for deleted node or descendant')
         return null
       }
       return current
     })
     
-    // Clear hover state if the deleted node was hovered
+    // Clear hover state if the deleted node or any of its descendants was hovered
     setHoveredNode((current) => {
-      if (current === nodeId) {
-        console.log('🔍 Clearing hover state for deleted node')
+      if (current && nodesToDelete.has(current)) {
+        console.log('🔍 Clearing hover state for deleted node or descendant')
         return null
       }
       return current
@@ -695,13 +720,36 @@ export function NetworkGraph({
           type: tx.direction as "in" | "out",
         })
       } else {
-        // Create new node
-        const angle = (childIndex / (existingChildren.length + selectedTransactions.length)) * 2 * Math.PI
+        // Create new node with directional positioning
         const radius = 120
         const newNodeId = `${targetNodeId}_child_${childIndex}`
         
-        const newNodeX = node.x + Math.cos(angle) * radius
-        const newNodeY = node.y + Math.sin(angle) * radius
+        // Position nodes based on transaction direction
+        let newNodeX: number, newNodeY: number
+        
+        if (tx.direction === 'in') {
+          // Input nodes (incoming transactions) go on the left
+          // Use a vertical spread on the left side
+          const inputNodes = selectedTransactions.filter(t => t.direction === 'in')
+          const inputIndex = inputNodes.findIndex(t => t.txHash === tx.txHash)
+          const totalInputs = inputNodes.length
+          
+          // Position vertically on the left side with some spread
+          const verticalOffset = totalInputs > 1 ? (inputIndex - (totalInputs - 1) / 2) * 40 : 0
+          newNodeX = node.x - radius
+          newNodeY = node.y + verticalOffset
+        } else {
+          // Output nodes (outgoing transactions) go on the right
+          // Use a vertical spread on the right side
+          const outputNodes = selectedTransactions.filter(t => t.direction === 'out')
+          const outputIndex = outputNodes.findIndex(t => t.txHash === tx.txHash)
+          const totalOutputs = outputNodes.length
+          
+          // Position vertically on the right side with some spread
+          const verticalOffset = totalOutputs > 1 ? (outputIndex - (totalOutputs - 1) / 2) * 40 : 0
+          newNodeX = node.x + radius
+          newNodeY = node.y + verticalOffset
+        }
         
         const nodeLabel = tx.entityName || `Wallet ${childIndex + 1}`
         newNodes.push({
@@ -711,7 +759,7 @@ export function NetworkGraph({
           label: nodeLabel,
           originalLabel: nodeLabel, // Preserve original label for user-defined label functionality
           address: tx.address,
-          type: "wallet" as const,
+          type: (tx.entity_type || tx.entityType) as any, // Use SOT entity_type if available
           risk: tx.risk || "medium",
           logo: tx.logo,
           chainLogo: tx.currency === "BTC" ? "/logos/btc.png" : 
@@ -722,6 +770,8 @@ export function NetworkGraph({
           balance: tx.balance,
           transactions: tx.transactionCount || 1,
           availableTransactions: 0, // Expanded nodes don't have further transactions by default
+          entity_type: tx.entity_type,
+          entity_tags: tx.entity_tags,
         })
 
         // Add connection to new node

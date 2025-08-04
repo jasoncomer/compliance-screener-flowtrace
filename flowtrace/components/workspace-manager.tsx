@@ -203,6 +203,9 @@ export function WorkspaceManager({
             <FolderOpen className="h-5 w-5" />
             Workspace Manager
           </DialogTitle>
+          <DialogDescription>
+            Manage your saved workspaces, search for addresses, and import/export workspace data.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col h-full">

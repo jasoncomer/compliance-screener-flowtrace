@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { fetchRiskScoringData } from '@/lib/api'
 import { Shield, AlertTriangle, Copy, ExternalLink, AlertCircle, Zap, Edit3, Save, X, Info, ArrowRight, RotateCcw } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -27,6 +28,8 @@ interface EntityPanelProps {
     address?: string
     isUserDefinedLabel?: boolean
     originalLabel?: string
+    entity_type?: string
+    entity_tags?: string[]
     notes?: Array<{
       id: string
       userId: string
@@ -233,6 +236,20 @@ const getNodeSpecificEvents = (nodeType?: string): SecurityEvent[] => {
 type FilterType = "all" | "high" | "medium" | "low"
 
 export function EntityPanel({ address, selectedNode, connections, onConnectNode, availableNodes, onAddNote, onUpdateNodeLabel, onRevertNodeLabel }: EntityPanelProps) {
+  // Debug logging for transaction count issue
+  useEffect(() => {
+    if (selectedNode) {
+      console.log('EntityPanel received selectedNode:', {
+        id: selectedNode.id,
+        address: selectedNode.address,
+        transactions: selectedNode.transactions,
+        availableTransactions: selectedNode.availableTransactions,
+        balance: selectedNode.balance,
+        type: selectedNode.type
+      });
+    }
+  }, [selectedNode]);
+
   const [isLoadingData, setIsLoadingData] = useState(false);
   
   // Debug logging removed - infinite loop fixed
@@ -242,6 +259,9 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false)
   const [isEditingLabel, setIsEditingLabel] = useState(false)
   const [editedLabel, setEditedLabel] = useState(selectedNode?.label || "")
+  const [riskData, setRiskData] = useState<any>(null)
+  const [isLoadingRiskData, setIsLoadingRiskData] = useState(false)
+  const [activeRiskTab, setActiveRiskTab] = useState<'entity' | 'transaction' | 'jurisdiction'>('entity')
 
   // Update notes when selectedNode changes
   useEffect(() => {
@@ -249,16 +269,140 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
     setIsAddingNote(false)
     setEditedLabel(selectedNode?.label || "")
     setIsEditingLabel(false)
+    
+    // Fetch risk data when node is selected
+    if (selectedNode?.address) {
+      fetchRiskData()
+    }
   }, [selectedNode?.id])
 
-  // Helper function to get risk color
-  const getRiskColor = (risk?: string) => {
-    switch (risk?.toLowerCase()) {
-      case 'high': return 'border-red-600 text-red-700 dark:text-red-400'
-      case 'medium': return 'border-yellow-600 text-yellow-700 dark:text-yellow-400'
-      case 'low': return 'border-green-600 text-green-700 dark:text-green-400'
-      default: return 'border-gray-500 text-gray-400'
+  // Fetch risk data when modal opens
+  const fetchRiskData = async () => {
+    if (!selectedNode?.address) return
+    
+    setIsLoadingRiskData(true)
+    try {
+      const response = await fetchRiskScoringData(selectedNode.address, 'address')
+      if (response?.success && response?.data) {
+        setRiskData(response.data)
+        console.log('Risk data loaded:', response.data)
+      } else {
+        // Fallback to mock data for demo
+        setRiskData({
+          overallRisk: 0.85,
+          entityRisk: {
+            aggregateScore: 0.95,
+            factors: [
+              {
+                id: 'entity-type',
+                score: 0.95,
+                severity: 'high',
+                description: 'High risk entity type: confirmed hacker wallet',
+                entityType: 'hacker'
+              },
+              {
+                id: 'kyc',
+                score: 0.0,
+                severity: 'low',
+                description: 'No KYC requirements for this entity',
+                entityType: 'unknown'
+              },
+              {
+                id: 'age',
+                score: 0.85,
+                severity: 'high',
+                description: 'Newly created wallet (2 days old)',
+                entityType: 'unknown'
+              },
+              {
+                id: 'reputation',
+                score: 0.90,
+                severity: 'high',
+                description: 'Associated with multiple exchange hacks',
+                entityType: 'unknown'
+              },
+              {
+                id: 'activity',
+                score: 0.88,
+                severity: 'high',
+                description: 'High volume of suspicious transactions',
+                entityType: 'unknown'
+              }
+            ]
+          },
+          transactionRisk: {
+            aggregateScore: 0.90,
+            factors: [
+              {
+                id: 'volume',
+                score: 0.85,
+                severity: 'high',
+                description: 'Unusually high transaction volume',
+                type: 'amount'
+              },
+              {
+                id: 'pattern',
+                score: 0.92,
+                severity: 'high',
+                description: 'Suspicious transaction patterns detected',
+                type: 'pattern'
+              },
+              {
+                id: 'timing',
+                score: 0.78,
+                severity: 'high',
+                description: 'Irregular transaction timing',
+                type: 'timing'
+              }
+            ]
+          },
+          jurisdictionRisk: {
+            aggregateScore: 0.75,
+            factors: [
+              {
+                id: 'country-risk',
+                score: 0.75,
+                severity: 'medium',
+                description: 'High-risk jurisdiction identified',
+                countries: ['Unknown']
+              }
+            ]
+          }
+        })
+      }
+    } catch (error) {
+      console.error('Error fetching risk data:', error)
+      // Use fallback data
+      setRiskData({
+        overallRisk: 0.85,
+        entityRisk: { aggregateScore: 0.95, factors: [] },
+        transactionRisk: { aggregateScore: 0.90, factors: [] },
+        jurisdictionRisk: { aggregateScore: 0.75, factors: [] }
+      })
+    } finally {
+      setIsLoadingRiskData(false)
     }
+  }
+
+  // Helper function to get risk color
+  const getRiskColor = (score: number) => {
+    if (score >= 0.7) return 'text-red-600 dark:text-red-400'
+    if (score >= 0.4) return 'text-orange-600 dark:text-orange-400'
+    return 'text-green-600 dark:text-green-400'
+  }
+
+  // Helper function to get risk bar color
+  const getRiskBarColor = (score: number) => {
+    if (score >= 0.7) return 'bg-red-500'
+    if (score >= 0.4) return 'bg-orange-500'
+    return 'bg-green-500'
+  }
+
+  // Helper function to get risk severity
+  const getRiskSeverity = (score: number) => {
+    if (score >= 0.7) return 'high'
+    if (score >= 0.4) return 'medium'
+    return 'low'
   }
 
   // Helper function to get risk badge variant
@@ -271,20 +415,272 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
     }
   }
 
-  // Helper function to get type badge
+  // Helper function to get tag colors
+  const getTagColor = (tag: string) => {
+    const tagLower = tag.toLowerCase()
+    
+    // Define color schemes for different tag categories
+    const tagColors: Record<string, string> = {
+      // Technology/Platform tags
+      'bitcoin': 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700',
+      'ethereum': 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700',
+      'defi': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700',
+      'nft': 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400 border-pink-300 dark:border-pink-700',
+      'dao': 'bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400 border-violet-300 dark:border-violet-700',
+      'layer2': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700',
+      'smart contract': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700',
+      
+      // Risk/Security tags
+      'high risk': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      'medium risk': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700',
+      'low risk': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700',
+      'sanctioned': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      'ofac': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      'suspicious': 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700',
+      
+      // Business/Service tags
+      'exchange': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700',
+      'wallet': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700',
+      'custodial': 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700',
+      'non-custodial': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700',
+      'lending': 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700',
+      'staking': 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700',
+      'yield': 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700',
+      
+      // Geographic tags
+      'us': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700',
+      'europe': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700',
+      'asia': 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400 border-amber-300 dark:border-amber-700',
+      'china': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      'singapore': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      'switzerland': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      
+      // Regulatory/Compliance tags
+      'regulated': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700',
+      'unregulated': 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700',
+      'kyc': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700',
+      'aml': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700',
+      'licensed': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700',
+      
+      // Activity tags
+      'trading': 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400 border-amber-300 dark:border-amber-700',
+      'mining': 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600',
+      'gaming': 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400 border-pink-300 dark:border-pink-700',
+      'gambling': 'bg-rose-100 text-rose-800 dark:bg-rose-900/20 dark:text-rose-400 border-rose-300 dark:border-rose-700',
+      'payments': 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700',
+      'remittance': 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700',
+      
+      // Status tags
+      'active': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700',
+      'inactive': 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600',
+      'suspended': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700',
+      'defunct': 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600',
+      'dead': 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600',
+      
+      // Size/Scale tags
+      'large': 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700',
+      'medium': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700',
+      'small': 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700',
+      'startup': 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700',
+      'enterprise': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700',
+    }
+    
+    // Check for exact matches first
+    if (tagColors[tagLower]) {
+      return tagColors[tagLower]
+    }
+    
+    // Check for partial matches
+    for (const [key, color] of Object.entries(tagColors)) {
+      if (tagLower.includes(key) || key.includes(tagLower)) {
+        return color
+      }
+    }
+    
+    // Default color for unmatched tags
+    return 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600'
+  }
+
+  // Helper function to get type badge with colors
   const getTypeBadge = (type?: string) => {
-    switch (type?.toLowerCase()) {
-      case 'target': return 'Target'
-      case 'exchange': return 'Exchange'
-      case 'hacker': return 'Hacker'
-      case 'mixer': return 'Mixer'
-      case 'service': return 'Service'
-      case 'defi': return 'DeFi'
-      case 'wallet': return 'Wallet'
-      case 'passthrough': return 'Pass-through'
-      case 'bridge': return 'Bridge'
-      case 'custom': return 'Custom'
-      default: return type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Unknown'
+    if (!type) return { text: 'Unknown', color: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600' }
+    
+    const lowerType = type.toLowerCase()
+    
+    // Handle basic node types
+    switch (lowerType) {
+      case 'target': return { text: 'Target', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'exchange': return { text: 'Exchange', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700' }
+      case 'hacker': return { text: 'Hacker', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'mixer': return { text: 'Mixer', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'service': return { text: 'Service', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700' }
+      case 'defi': return { text: 'DeFi', color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700' }
+      case 'wallet': return { text: 'Wallet', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      case 'passthrough': return { text: 'Pass-through', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'bridge': return { text: 'Bridge', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700' }
+      case 'custom': return { text: 'Custom', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700' }
+    }
+    
+    // Handle SOT entity_type values with semantic colors
+    switch (lowerType) {
+      // Exchanges - Blue theme
+      case 'centralized exchange': return { text: 'Centralized Exchange', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700' }
+      case 'dex': return { text: 'DEX', color: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700' }
+      
+      // Wallets - Green theme
+      case 'custodial wallet': return { text: 'Custodial Wallet', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      case 'non custodial wallets': return { text: 'Non-Custodial Wallet', color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700' }
+      
+      // DeFi - Emerald theme
+      case 'amm': return { text: 'AMM', color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700' }
+      case 'lending': return { text: 'Lending', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700' }
+      case 'staking': return { text: 'Staking', color: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700' }
+      case 'yield': return { text: 'Yield', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'yeild': return { text: 'Yield', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'governance': return { text: 'Governance', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400 border-violet-300 dark:border-violet-700' }
+      case 'dao': return { text: 'DAO', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700' }
+      
+      // Infrastructure - Indigo theme
+      case 'blockchain infrastructure': return { text: 'Blockchain Infrastructure', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700' }
+      case 'layer 1': return { text: 'Layer 1', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700' }
+      case 'layer 2': return { text: 'Layer 2', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700' }
+      case 'smart contract platform': return { text: 'Smart Contract Platform', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400 border-violet-300 dark:border-violet-700' }
+      case 'bridge': return { text: 'Bridge', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400 border-indigo-300 dark:border-indigo-700' }
+      case 'cross chain': return { text: 'Cross Chain', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 border-blue-300 dark:border-blue-700' }
+      
+      // Services - Purple theme
+      case 'services': return { text: 'Services', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700' }
+      case 'hosting': return { text: 'Hosting', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700' }
+      case 'cloud services': return { text: 'Cloud Services', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400 border-violet-300 dark:border-violet-700' }
+      case 'escrow': return { text: 'Escrow', color: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/20 dark:text-fuchsia-400 border-fuchsia-300 dark:border-fuchsia-700' }
+      case 'custodian': return { text: 'Custodian', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700' }
+      case 'trustee': return { text: 'Trustee', color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400 border-violet-300 dark:border-violet-700' }
+      case 'vault': return { text: 'Vault', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 border-purple-300 dark:border-purple-700' }
+      case 'whitelabel service': return { text: 'White Label Service', color: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/20 dark:text-fuchsia-400 border-fuchsia-300 dark:border-fuchsia-700' }
+      
+      // Trading & Finance - Orange/Yellow theme
+      case 'derivatives': return { text: 'Derivatives', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'perpetual futures': return { text: 'Perpetual Futures', color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400 border-amber-300 dark:border-amber-700' }
+      case 'options': return { text: 'Options', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700' }
+      case 'copy trading': return { text: 'Copy Trading', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'trading bot': return { text: 'Trading Bot', color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400 border-amber-300 dark:border-amber-700' }
+      case 'mev bot': return { text: 'MEV Bot', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700' }
+      case 'forex': return { text: 'Forex', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'fund': return { text: 'Fund', color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400 border-amber-300 dark:border-amber-700' }
+      case 'venture capital': return { text: 'Venture Capital', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700' }
+      case 'retirement accounts': return { text: 'Retirement Accounts', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      
+      // Payments & Ramp - Teal theme
+      case 'payments': return { text: 'Payments', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700' }
+      case 'remittance': return { text: 'Remittance', color: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700' }
+      case 'general fiat ramp': return { text: 'Fiat Ramp', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700' }
+      case 'atm': return { text: 'ATM', color: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700' }
+      case 'changer': return { text: 'Changer', color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-400 border-teal-300 dark:border-teal-700' }
+      case 'gateway': return { text: 'Gateway', color: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-400 border-cyan-300 dark:border-cyan-700' }
+      
+      // Gaming & Gambling - Pink theme
+      case 'gaming': return { text: 'Gaming', color: 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400 border-pink-300 dark:border-pink-700' }
+      case 'gambling': return { text: 'Gambling', color: 'bg-rose-100 text-rose-800 dark:bg-rose-900/20 dark:text-rose-400 border-rose-300 dark:border-rose-700' }
+      case 'nft': return { text: 'NFT', color: 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400 border-pink-300 dark:border-pink-700' }
+      case 'marketplace': return { text: 'Marketplace', color: 'bg-rose-100 text-rose-800 dark:bg-rose-900/20 dark:text-rose-400 border-rose-300 dark:border-rose-700' }
+      case 'brc marketplace': return { text: 'BRC Marketplace', color: 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400 border-pink-300 dark:border-pink-700' }
+      case 'opensea profile': return { text: 'OpenSea Profile', color: 'bg-rose-100 text-rose-800 dark:bg-rose-900/20 dark:text-rose-400 border-rose-300 dark:border-rose-700' }
+      
+      // Mining - Slate theme
+      case 'mining': return { text: 'Mining', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'miner': return { text: 'Miner', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'mining pool': return { text: 'Mining Pool', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      
+      // Tokens & Assets - Lime theme
+      case 'token issuer': return { text: 'Token Issuer', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'ico': return { text: 'ICO', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'launchpad': return { text: 'Launchpad', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      case 'airdrop': return { text: 'Airdrop', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'faucet': return { text: 'Faucet', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      case 'ordinals': return { text: 'Ordinals', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'runes': return { text: 'Runes', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      case 'real world assets': return { text: 'Real World Assets', color: 'bg-lime-100 text-lime-800 dark:bg-lime-900/20 dark:text-lime-400 border-lime-300 dark:border-lime-700' }
+      case 'wrapped coin reserves': return { text: 'Wrapped Coin Reserves', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      
+      // Profiles & Social - Sky theme
+      case 'individual person': return { text: 'Individual', color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400 border-sky-300 dark:border-sky-700' }
+      case 'bitcointalk profile': return { text: 'BitcoinTalk Profile', color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400 border-sky-300 dark:border-sky-700' }
+      case 'reddit profile': return { text: 'Reddit Profile', color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400 border-sky-300 dark:border-sky-700' }
+      case 'telegram profile': return { text: 'Telegram Profile', color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400 border-sky-300 dark:border-sky-700' }
+      case 'twitter profile': return { text: 'Twitter Profile', color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400 border-sky-300 dark:border-sky-700' }
+      case 'darknet forum profile': return { text: 'Darknet Forum Profile', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'other profile': return { text: 'Other Profile', color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400 border-sky-300 dark:border-sky-700' }
+      
+      // Government & Legal - Red theme (high risk)
+      case 'government': return { text: 'Government', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'ofac sanctioned': return { text: 'OFAC Sanctioned', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'seized funds': return { text: 'Seized Funds', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      
+      // Donations - Neutral theme
+      case 'adult site donation': return { text: 'Adult Site Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'blog donation': return { text: 'Blog Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'candidate donations': return { text: 'Candidate Donations', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'darknet donations': return { text: 'Darknet Donations', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'darknet cannabis': return { text: 'Darknet Cannabis', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'extremist donation': return { text: 'Extremist Donation', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'forum donation': return { text: 'Forum Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'government donation': return { text: 'Government Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'news donation': return { text: 'News Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'non - government donation': return { text: 'Non-Government Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'other donations': return { text: 'Other Donations', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'prisoner donations': return { text: 'Prisoner Donations', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'religous donation': return { text: 'Religious Donation', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      
+      // Illicit Activities - Red/Orange theme (high risk)
+      case 'adult content': return { text: 'Adult Content', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'bio weapons': return { text: 'Bio Weapons', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'carding': return { text: 'Carding', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'cocaine': return { text: 'Cocaine', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'counterfeit documents': return { text: 'Counterfeit Documents', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'counterfeit money': return { text: 'Counterfeit Money', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'csam': return { text: 'CSAM', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'cybercrime': return { text: 'Cybercrime', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'cybercrime victim': return { text: 'Cybercrime Victim', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'darknet': return { text: 'Darknet', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'drugs': return { text: 'Drugs', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'fake identification': return { text: 'Fake Identification', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'file sharing': return { text: 'File Sharing', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'ghost guns': return { text: 'Ghost Guns', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'military grade weapons': return { text: 'Military Grade Weapons', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'murder for hire': return { text: 'Murder for Hire', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'opioids': return { text: 'Opioids', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'pharmacuticals': return { text: 'Pharmaceuticals', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'precursor research chemicals': return { text: 'Precursor Research Chemicals', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'scam': return { text: 'Scam', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'spam': return { text: 'Spam', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400 border-orange-300 dark:border-orange-700' }
+      case 'terrorism': return { text: 'Terrorism', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'weapons': return { text: 'Weapons', color: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border-red-300 dark:border-red-700' }
+      case 'whitehat hacking': return { text: 'Whitehat Hacking', color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border-green-300 dark:border-green-700' }
+      
+      // Other Categories - Neutral theme
+      case 'advertising': return { text: 'Advertising', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'affiliate program': return { text: 'Affiliate Program', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'artificial intelligence': return { text: 'AI', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'coinjoin address': return { text: 'CoinJoin Address', color: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-600' }
+      case 'debit card': return { text: 'Debit Card', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'etf': return { text: 'ETF', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'gift cards': return { text: 'Gift Cards', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'insurance': return { text: 'Insurance', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'key personnel': return { text: 'Key Personnel', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'real estate services': return { text: 'Real Estate Services', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'records management': return { text: 'Records Management', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'retailer': return { text: 'Retailer', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'smart money': return { text: 'Smart Money', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'software': return { text: 'Software', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'other app': return { text: 'Other App', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'other': return { text: 'Other', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+      case 'p2p service': return { text: 'P2P Service', color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' }
+    }
+    
+    // For any unmatched values, capitalize the first letter and return with neutral color
+    return { 
+      text: type.charAt(0).toUpperCase() + type.slice(1), 
+      color: 'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-600' 
     }
   }
 
@@ -493,17 +889,22 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
               <div className="flex space-x-2 mt-2">
                 <Badge 
                   variant="outline" 
-                  className={
-                    selectedNode?.type === "custom" 
-                      ? "border-green-500 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20" 
-                      : "border-blue-500 text-blue-400"
-                  }
+                  className={getTypeBadge(selectedNode?.entity_type || selectedNode?.type)?.color}
                 >
-                  {getTypeBadge(selectedNode?.type)}
+                  {getTypeBadge(selectedNode?.entity_type || selectedNode?.type)?.text}
                 </Badge>
                 <Badge 
                   variant="outline"
                   className={`font-bold ${
+                    isLoadingRiskData ? (
+                      "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-400 border-gray-300 dark:border-gray-600"
+                    ) : riskData ? (
+                      riskData.overallRisk >= 0.7
+                        ? "bg-red-600 dark:bg-red-500 text-white border-red-600 dark:border-red-500 shadow-sm animate-pulse"
+                        : riskData.overallRisk >= 0.4
+                        ? "bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700"
+                        : "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-400 border-green-300 dark:border-green-700"
+                    ) : (
                     selectedNode?.risk?.toLowerCase() === 'high'
                       ? "bg-red-600 dark:bg-red-500 text-white border-red-600 dark:border-red-500 shadow-sm animate-pulse"
                       : selectedNode?.risk?.toLowerCase() === 'medium'
@@ -511,14 +912,40 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                       : selectedNode?.risk?.toLowerCase() === 'low'
                       ? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-400 border-green-300 dark:border-green-700"
                       : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-400 border-gray-300 dark:border-gray-600"
+                    )
                   }`}
                 >
-                  {selectedNode?.risk?.toLowerCase() === 'high' 
+                  {isLoadingRiskData ? (
+                    "Loading..."
+                  ) : riskData ? (
+                    riskData.overallRisk >= 0.7
+                      ? "⚠ HIGH RISK"
+                      : riskData.overallRisk >= 0.4
+                      ? "MEDIUM RISK"
+                      : "LOW RISK"
+                  ) : (
+                    selectedNode?.risk?.toLowerCase() === 'high' 
                     ? "⚠ HIGH RISK" 
                     : `${selectedNode?.risk?.toUpperCase() || 'UNKNOWN'} Risk`
-                  }
+                  )}
                 </Badge>
               </div>
+              {selectedNode?.entity_tags && selectedNode.entity_tags.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs text-muted-foreground mb-1">Tags:</div>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedNode.entity_tags.map((tag, tagIndex) => (
+                      <Badge 
+                        key={tagIndex} 
+                        variant="outline" 
+                        className={`text-xs px-2 py-1 ${getTagColor(tag)}`}
+                      >
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <Button 
               variant="ghost" 
@@ -746,10 +1173,23 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
               <Dialog>
                 <DialogTrigger asChild>
                   <span className="text-foreground cursor-pointer hover:text-primary transition-colors flex items-center gap-1 group">
-                    {selectedNode?.transactions !== undefined 
-                      ? selectedNode.transactions.toLocaleString() 
-                      : "Loading..."}
-                    {selectedNode?.transactions === undefined && (
+                    {(() => {
+                      // If availableTransactions is defined and > 0, show it
+                      if (selectedNode?.availableTransactions !== undefined && selectedNode.availableTransactions > 0) {
+                        return selectedNode.availableTransactions.toLocaleString();
+                      }
+                      // If transactions is defined and > 0, show it
+                      if (selectedNode?.transactions !== undefined && selectedNode.transactions > 0) {
+                        return selectedNode.transactions.toLocaleString();
+                      }
+                      // If both are 0 or undefined, show loading
+                      if (selectedNode?.availableTransactions === undefined && selectedNode?.transactions === undefined) {
+                        return "Loading...";
+                      }
+                      // If we have explicit 0 values, show 0
+                      return "0";
+                    })()}
+                    {(selectedNode?.availableTransactions === undefined && selectedNode?.transactions === undefined) && (
                       <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                     )}
                     <Info className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -775,11 +1215,11 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                         </div>
                         <div className="flex justify-between">
                           <span className="text-blue-700 dark:text-blue-300">Available for Expansion:</span>
-                          <span className="font-mono font-medium">{selectedNode?.availableTransactions?.toLocaleString() || "0"}</span>
+                          <span className="font-mono font-medium">{selectedNode?.availableTransactions?.toLocaleString() || selectedNode?.transactions?.toLocaleString() || "0"}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-blue-700 dark:text-blue-300">Entity Type:</span>
-                          <span className="font-medium">{getTypeBadge(selectedNode?.type) || "Unknown"}</span>
+                          <span className="font-medium">{getTypeBadge(selectedNode?.entity_type || selectedNode?.type)?.text || "Unknown"}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-blue-700 dark:text-blue-300">Risk Level:</span>
@@ -801,7 +1241,10 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                     </div>
                     <div className="text-sm text-gray-600 dark:text-gray-400">
                       <p className="mb-2">
-                        This {getTypeBadge(selectedNode?.type)?.toLowerCase() || "entity"} has been involved in {selectedNode?.transactions?.toLocaleString() || "0"} blockchain transactions.
+                        This {getTypeBadge(selectedNode?.type)?.text?.toLowerCase() || "entity"} has been involved in {selectedNode?.transactions?.toLocaleString() || "0"} blockchain transactions.
+                        {selectedNode?.availableTransactions && selectedNode.availableTransactions > 0 && (
+                          <span className="text-blue-600 dark:text-blue-400 font-medium"> 📊 {selectedNode.availableTransactions.toLocaleString()} transactions available for expansion.</span>
+                        )}
                         {selectedNode?.risk === 'high' && (
                           <span className="text-red-600 dark:text-red-400 font-medium"> ⚠️ High risk activity detected.</span>
                         )}
@@ -818,11 +1261,19 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                 <div className="w-16 h-2 bg-muted rounded-full overflow-hidden">
                   <div 
                     className={`h-full ${
-                      selectedNode?.risk === 'high' ? 'bg-red-500 w-4/5' :
-                      selectedNode?.risk === 'medium' ? 'bg-yellow-500 w-2/3' :
-                      selectedNode?.risk === 'low' ? 'bg-green-500 w-1/3' :
-                      'bg-gray-500 w-1/2'
+                      riskData ? `${getRiskBarColor(riskData.overallRisk)}` :
+                      selectedNode?.risk === 'high' ? 'bg-red-500' :
+                      selectedNode?.risk === 'medium' ? 'bg-yellow-500' :
+                      selectedNode?.risk === 'low' ? 'bg-green-500' :
+                      'bg-gray-500'
                     }`}
+                    style={{
+                      width: riskData ? `${riskData.overallRisk * 100}%` :
+                              selectedNode?.risk === 'high' ? '80%' :
+                              selectedNode?.risk === 'medium' ? '65%' :
+                              selectedNode?.risk === 'low' ? '30%' :
+                              '50%'
+                    }}
                   ></div>
                 </div>
                 <span className={`font-bold ${
@@ -831,7 +1282,8 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                   selectedNode?.risk === 'low' ? 'text-green-400' :
                   'text-gray-400'
                 }`}>
-                  {selectedNode?.risk === 'high' ? '85/100' :
+                  {riskData ? `${Math.round(riskData.overallRisk * 100)}/100` :
+                   selectedNode?.risk === 'high' ? '85/100' :
                    selectedNode?.risk === 'medium' ? '65/100' :
                    selectedNode?.risk === 'low' ? '25/100' :
                    '50/100'}
@@ -839,7 +1291,9 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setIsRiskModalOpen(true)}
+                  onClick={() => {
+                    setIsRiskModalOpen(true)
+                  }}
                   className="h-6 px-2 text-xs"
                 >
                   <Shield className="h-3 w-3 mr-1" />
@@ -1084,6 +1538,9 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
               <Shield className="h-5 w-5 text-orange-600 dark:text-orange-400" />
               Risk Score Analysis
             </DialogTitle>
+            <DialogDescription>
+              Comprehensive risk analysis based on transaction patterns, entity associations, and jurisdictional factors.
+            </DialogDescription>
           </DialogHeader>
           <div className="rounded-2xl border p-6 bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700">
             <div className="w-full h-full flex flex-col">
@@ -1093,66 +1550,126 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                   {selectedNode?.address || address || 'bc1q47ce0c6ed5b0ce3d3a51fdb1c52dc66a7c3c2f1e0b9a8d7c6b5a4f3e2d1c0b9a8'}
                 </code>
               </div>
+              {isLoadingRiskData ? (
+                <div className="p-8 text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600 dark:text-gray-400">Loading risk analysis...</p>
+                </div>
+              ) : riskData ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 border-b border-gray-200 dark:border-gray-700">
                 <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                   <div className="mb-2">
                     <div className="text-sm text-gray-600 dark:text-gray-400">Overall Risk</div>
-                    <div className="text-2xl font-bold text-red-600 dark:text-red-400">85</div>
+                      <div className={`text-2xl font-bold ${getRiskColor(riskData.overallRisk)}`}>
+                        {Math.round(riskData.overallRisk * 100)}
+                      </div>
                   </div>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div className="h-2 rounded-full bg-red-500" style={{ width: '85%' }}></div>
+                      <div 
+                        className={`h-2 rounded-full ${getRiskBarColor(riskData.overallRisk)}`} 
+                        style={{ width: `${riskData.overallRisk * 100}%` }}
+                      ></div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">85%</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {Math.round(riskData.overallRisk * 100)}%
+                    </div>
                 </div>
                 <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                   <div className="mb-2">
                     <div className="text-sm text-gray-600 dark:text-gray-400">Transaction Risk</div>
-                    <div className="text-2xl font-bold text-red-600 dark:text-red-400">90</div>
+                      <div className={`text-2xl font-bold ${getRiskColor(riskData.transactionRisk.aggregateScore)}`}>
+                        {Math.round(riskData.transactionRisk.aggregateScore * 100)}
+                      </div>
                   </div>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div className="h-2 rounded-full bg-red-500" style={{ width: '90%' }}></div>
+                      <div 
+                        className={`h-2 rounded-full ${getRiskBarColor(riskData.transactionRisk.aggregateScore)}`} 
+                        style={{ width: `${riskData.transactionRisk.aggregateScore * 100}%` }}
+                      ></div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">90%</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {Math.round(riskData.transactionRisk.aggregateScore * 100)}%
+                    </div>
                 </div>
                 <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                   <div className="mb-2">
                     <div className="text-sm text-gray-600 dark:text-gray-400">Entity Risk</div>
-                    <div className="text-2xl font-bold text-red-600 dark:text-red-400">95</div>
+                      <div className={`text-2xl font-bold ${getRiskColor(riskData.entityRisk.aggregateScore)}`}>
+                        {Math.round(riskData.entityRisk.aggregateScore * 100)}
+                      </div>
                   </div>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div className="h-2 rounded-full bg-red-500" style={{ width: '95%' }}></div>
+                      <div 
+                        className={`h-2 rounded-full ${getRiskBarColor(riskData.entityRisk.aggregateScore)}`} 
+                        style={{ width: `${riskData.entityRisk.aggregateScore * 100}%` }}
+                      ></div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">95%</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {Math.round(riskData.entityRisk.aggregateScore * 100)}%
+                    </div>
                 </div>
                 <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                   <div className="mb-2">
                     <div className="text-sm text-gray-600 dark:text-gray-400">Jurisdiction Risk</div>
-                    <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">75</div>
+                      <div className={`text-2xl font-bold ${getRiskColor(riskData.jurisdictionRisk.aggregateScore)}`}>
+                        {Math.round(riskData.jurisdictionRisk.aggregateScore * 100)}
+                      </div>
                   </div>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div className="h-2 rounded-full bg-orange-500" style={{ width: '75%' }}></div>
+                      <div 
+                        className={`h-2 rounded-full ${getRiskBarColor(riskData.jurisdictionRisk.aggregateScore)}`} 
+                        style={{ width: `${riskData.jurisdictionRisk.aggregateScore * 100}%` }}
+                      ></div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">75%</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {Math.round(riskData.jurisdictionRisk.aggregateScore * 100)}%
                 </div>
               </div>
+                </div>
+              ) : (
+                <div className="p-8 text-center">
+                  <p className="text-gray-600 dark:text-gray-400">No risk data available</p>
+                </div>
+              )}
               <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <div className="border-b border-gray-200 dark:border-gray-700 mb-4">
                   <div className="flex">
-                    <button className="flex items-center px-4 py-2 text-sm font-medium transition-colors text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400">
+                      <button 
+                        onClick={() => setActiveRiskTab('entity')}
+                        className={`flex items-center px-4 py-2 text-sm font-medium transition-colors ${
+                          activeRiskTab === 'entity' 
+                            ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400' 
+                            : 'text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400'
+                        }`}
+                      >
                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-user w-4 h-4 mr-2">
                         <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
                         <circle cx="12" cy="7" r="4"></circle>
                       </svg>
                       Entity Risk Factors
                     </button>
-                    <button className="flex items-center px-4 py-2 text-sm font-medium transition-colors text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400">
+                      <button 
+                        onClick={() => setActiveRiskTab('transaction')}
+                        className={`flex items-center px-4 py-2 text-sm font-medium transition-colors ${
+                          activeRiskTab === 'transaction' 
+                            ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400' 
+                            : 'text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400'
+                        }`}
+                      >
                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-trending-up w-4 h-4 mr-2">
                         <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
                         <polyline points="16 7 22 7 22 13"></polyline>
                       </svg>
                       Transaction Risk Factors
                     </button>
-                    <button className="flex items-center px-4 py-2 text-sm font-medium transition-colors text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400">
+                      <button 
+                        onClick={() => setActiveRiskTab('jurisdiction')}
+                        className={`flex items-center px-4 py-2 text-sm font-medium transition-colors ${
+                          activeRiskTab === 'jurisdiction' 
+                            ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-600 dark:border-orange-400' 
+                            : 'text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400'
+                        }`}
+                      >
                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-globe w-4 h-4 mr-2">
                         <circle cx="12" cy="12" r="10"></circle>
                         <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
@@ -1163,6 +1680,7 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                   </div>
                 </div>
                 <div className="overflow-x-auto">
+                    {riskData ? (
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -1172,93 +1690,47 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                       </tr>
                     </thead>
                     <tbody>
-                      <tr className="border-b border-gray-200 dark:border-gray-700">
+                          {(() => {
+                            const factors = activeRiskTab === 'entity' ? riskData.entityRisk.factors :
+                                           activeRiskTab === 'transaction' ? riskData.transactionRisk.factors :
+                                           riskData.jurisdictionRisk.factors;
+                            
+                            return factors.map((factor: any, index: number) => (
+                              <tr key={factor.id || index} className="border-b border-gray-200 dark:border-gray-700">
                         <td className="py-3 px-2">
                           <div className="flex items-center">
-                            <Shield className="w-4 h-4 mr-2 text-red-600 dark:text-red-400" />
-                            <span className="text-sm text-gray-900 dark:text-gray-100">entity-type</span>
+                                    <Shield className={`w-4 h-4 mr-2 ${
+                                      factor.severity === 'high' ? 'text-red-600 dark:text-red-400' :
+                                      factor.severity === 'medium' ? 'text-orange-600 dark:text-orange-400' :
+                                      'text-green-600 dark:text-green-400'
+                                    }`} />
+                                    <span className="text-sm text-gray-900 dark:text-gray-100">{factor.id}</span>
                           </div>
                         </td>
                         <td className="py-3 px-2">
                           <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                            <div className="h-1.5 rounded-full bg-red-500" style={{ width: '95%' }}></div>
+                                    <div 
+                                      className={`h-1.5 rounded-full ${getRiskBarColor(factor.score)}`} 
+                                      style={{ width: `${factor.score * 100}%` }}
+                                    ></div>
                           </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">95%</span>
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    {Math.round(factor.score * 100)}%
+                                  </span>
                         </td>
                         <td className="py-3 px-2">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">High risk entity type: confirmed hacker wallet</span>
+                                  <span className="text-sm text-gray-600 dark:text-gray-400">{factor.description}</span>
                         </td>
                       </tr>
-                      <tr className="border-b border-gray-200 dark:border-gray-700">
-                        <td className="py-3 px-2">
-                          <div className="flex items-center">
-                            <Shield className="w-4 h-4 mr-2 text-red-600 dark:text-red-400" />
-                            <span className="text-sm text-gray-900 dark:text-gray-100">kyc</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-2">
-                          <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                            <div className="h-1.5 rounded-full bg-green-500" style={{ width: '0%' }}></div>
-                          </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">0%</span>
-                        </td>
-                        <td className="py-3 px-2">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">No KYC requirements for this entity</span>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-gray-200 dark:border-gray-700">
-                        <td className="py-3 px-2">
-                          <div className="flex items-center">
-                            <Shield className="w-4 h-4 mr-2 text-orange-600 dark:text-orange-400" />
-                            <span className="text-sm text-gray-900 dark:text-gray-100">age</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-2">
-                          <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                            <div className="h-1.5 rounded-full bg-red-500" style={{ width: '85%' }}></div>
-                          </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">85%</span>
-                        </td>
-                        <td className="py-3 px-2">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">Newly created wallet (2 days old)</span>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-gray-200 dark:border-gray-700">
-                        <td className="py-3 px-2">
-                          <div className="flex items-center">
-                            <Shield className="w-4 h-4 mr-2 text-red-600 dark:text-red-400" />
-                            <span className="text-sm text-gray-900 dark:text-gray-100">reputation</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-2">
-                          <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                            <div className="h-1.5 rounded-full bg-red-500" style={{ width: '90%' }}></div>
-                          </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">90%</span>
-                        </td>
-                        <td className="py-3 px-2">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">Associated with multiple exchange hacks</span>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-gray-200 dark:border-gray-700">
-                        <td className="py-3 px-2">
-                          <div className="flex items-center">
-                            <Shield className="w-4 h-4 mr-2 text-red-600 dark:text-red-400" />
-                            <span className="text-sm text-gray-900 dark:text-gray-100">activity</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-2">
-                          <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                            <div className="h-1.5 rounded-full bg-red-500" style={{ width: '88%' }}></div>
-                          </div>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">88%</span>
-                        </td>
-                        <td className="py-3 px-2">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">High volume of suspicious transactions</span>
-                        </td>
-                      </tr>
+                            ));
+                          })()}
                     </tbody>
                   </table>
+                    ) : (
+                      <div className="p-8 text-center">
+                        <p className="text-gray-600 dark:text-gray-400">No risk factors available</p>
+                      </div>
+                    )}
                 </div>
               </div>
             </div>
