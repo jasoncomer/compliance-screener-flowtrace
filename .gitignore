@@ -103,6 +103,10 @@ flowtrace/out/
 api/.env*
 flowtrace/.env*
 
+# Configuration files with secrets
+api/src/configs/blockscout-gcp.json
+api/src/configs/*.json
+
 # Logs
 api/logs/
 flowtrace/logs/
