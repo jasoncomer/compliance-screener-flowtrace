@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run check-types:*)",
+      "Bash(npm run check-lint:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npx ts-node:*)"
+    ],
+    "deny": []
+  }
+}

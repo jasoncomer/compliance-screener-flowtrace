@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "sourceMap": true,
+    "target": "esnext",
+    "module": "commonjs",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": false,
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": [
+      "dom",
+      "esnext"
+    ],
+    "allowJs": true,
+    "rootDir": ".",
+    "removeComments": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "baseUrl": "./",
+    "paths": {
+      "@src/*": [
+        "src/*"
+      ]
+    },
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage"
+  ],
+  "include": [
+    "src",
+    "scripts"
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "colorize.languages": [
+    "css",
+    "sass",
+    "scss",
+    "less",
+    "postcss",
+    "sss",
+    "stylus",
+    "xml",
+    "svg",
+    "json",
+    "ts",
+    "js",
+    "tsx",
+    "jsx"
+  ],
+  "editor.formatOnPaste": true,
+  "editor.formatOnSave": true,
+  "cSpell.words": [
+    "ENDPOIN",
+    "semibold"
+  ],
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "always"
+  },
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false,
+  "editor.defaultFormatter": "vscode.typescript-language-features"
+}

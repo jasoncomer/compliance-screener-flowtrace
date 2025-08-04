@@ -1,0 +1,1445 @@
+openapi: '3.0.0'
+info:
+  title: API Documentation
+  description: API documentation for routes
+  version: 1.0.0
+
+servers:
+  - url: '{serverUrl}/api/{apiVersion}'
+    variables:
+      apiVersion:
+        default: v1
+        enum:
+          - v1
+      serverUrl:
+        description: Environment URL
+        default: http://localhost:8004
+
+paths:
+  # Health Check & Home
+  /:
+    get:
+      summary: API health check endpoint
+      tags:
+        - Health Check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error: 
+                    type: boolean
+                    example: false
+                  status:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: 'Welcome to Rest API - 🌎🌍🌏 - health check confirm'
+                  data:
+                    type: object
+                    nullable: true
+                    example: null
+
+  # Admin Routes
+  /admin/users/add:
+    post:
+      summary: Add new user (admin only)
+      tags:
+        - Admin
+      security:
+        - Authorization: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                profileImage:
+                  type: string
+                  format: binary
+                email:
+                  type: string
+                password:
+                  type: string
+                name:
+                  type: string
+                role:
+                  type: string
+                  enum: [user, admin]
+      responses:
+        '201':
+          description: User created successfully
+          
+  /admin/users/update/{userId}:
+    put:
+      summary: Update user (admin only)
+      tags:
+        - Admin
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                profileImage:
+                  type: string
+                  format: binary
+                email:
+                  type: string
+                name:
+                  type: string
+                role:
+                  type: string
+                  enum: [user, admin]
+      responses:
+        '200':
+          description: User updated successfully
+
+  /admin/users/remove/{userId}:
+    delete:
+      summary: Remove user (admin only)
+      tags:
+        - Admin
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User removed successfully
+
+  # Auth Routes
+  /auth/signup:
+    post:
+      summary: Register new user
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+                name:
+                  type: string
+      responses:
+        '201':
+          description: User registered successfully
+
+  /auth/login:
+    post:
+      summary: Login user
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+
+  /auth/logout:
+    post:
+      summary: Logout user
+      tags:
+        - Auth
+      security:
+        - Authorization: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Logout successful
+
+  /auth/update/{userId}:
+    patch:
+      summary: Update user profile
+      tags:
+        - Auth
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                profileImage:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+                email:
+                  type: string
+      responses:
+        '200':
+          description: Profile updated successfully
+
+  /auth/remove/{userId}:
+    delete:
+      summary: Delete user account
+      tags:
+        - Auth
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Account deleted successfully
+
+  /auth/verify-email/{userId}/{token}:
+    get:
+      summary: Verify user email
+      tags:
+        - Auth
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Email verified successfully
+
+  /auth/refresh-token:
+    post:
+      summary: Refresh access token
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed successfully
+
+  /auth/forget-password:
+    post:
+      summary: Request password reset
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+      responses:
+        '200':
+          description: Reset email sent successfully
+
+  /auth/reset-password/{userId}/{token}:
+    post:
+      summary: Reset password
+      tags:
+        - Auth
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                confirmPassword:
+                  type: string
+      responses:
+        '200':
+          description: Password reset successful
+
+  /auth/me:
+    get:
+      summary: Get current user profile
+      tags:
+        - Auth
+      security:
+        - Authorization: []
+      responses:
+        '200':
+          description: Profile retrieved successfully
+
+  # Blockchain Routes
+  /blockchain/attributions:
+    post:
+      summary: Get blockchain attributions
+      tags:
+        - Blockchain
+      responses:
+        '200':
+          description: Attributions retrieved successfully
+
+  /blockchain/address/{address}:
+    get:
+      summary: Get blockchain address details
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: address
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Address details retrieved successfully
+
+  /blockchain/address/{address}/summary:
+    get:
+      summary: Get blockchain address summary
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: address
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Address summary retrieved successfully
+
+  /blockchain/address/{address}/transactions:
+    get:
+      summary: Get address transactions
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: address
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transactions retrieved successfully
+
+  /blockchain/block/{block}:
+    get:
+      summary: Get block details
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: block
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Block details retrieved successfully
+
+  /blockchain/transaction/{txhash}:
+    get:
+      summary: Get transaction details
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: txhash
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transaction details retrieved successfully
+
+  /blockchain/sot:
+    get:
+      summary: Get SOT data
+      tags:
+        - Blockchain
+      responses:
+        '200':
+          description: SOT data retrieved successfully
+
+  /blockchain/sot/{id}:
+    put:
+      summary: Update SOT data
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SOT data updated successfully
+    
+    delete:
+      summary: Delete SOT data
+      tags:
+        - Blockchain
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SOT data deleted successfully
+
+  # Case Routes
+  /case:
+    post:
+      summary: Create new case
+      tags:
+        - Case
+      security:
+        - Authorization: []
+      responses:
+        '201':
+          description: Case created successfully
+
+    get:
+      summary: Get cases
+      tags:
+        - Case
+      security:
+        - Authorization: []
+      responses:
+        '200':
+          description: Cases retrieved successfully
+
+  /case/{caseId}:
+    delete:
+      summary: Delete case
+      tags:
+        - Case
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: caseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Case deleted successfully
+
+  # Payment Routes
+  /payment/strip-Key:
+    get:
+      summary: Get Stripe public key
+      tags:
+        - Payment
+      security:
+        - Authorization: []
+      responses:
+        '200':
+          description: Stripe key retrieved successfully
+
+  /payment/capture-stripe-payment:
+    post:
+      summary: Capture Stripe payment
+      tags:
+        - Payment
+      security:
+        - Authorization: []
+      responses:
+        '200':
+          description: Payment captured successfully
+
+  /payment/create-stripe-checkout-session:
+    post:
+      summary: Create Stripe checkout session
+      tags:
+        - Payment
+      security:
+        - Authorization: []
+      responses:
+        '200':
+          description: Checkout session created successfully
+
+  # PDF Routes
+  /pdf-test:
+    get:
+      summary: Get sample PDF
+      tags:
+        - PDF
+      responses:
+        '200':
+          description: PDF retrieved successfully
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  # Report Routes
+  /report:
+    post:
+      summary: Create report
+      tags:
+        - Report
+      responses:
+        '201':
+          description: Report created successfully
+
+  # Organization Routes
+  /organizations:
+    get:
+      summary: List organizations where user is a member
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      responses:
+        '200':
+          description: Organizations retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Organizations retrieved successfully
+                  status:
+                    type: number
+                    example: 200
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Organization'
+        '401':
+          description: Unauthorized - User not found
+        '422':
+          description: Validation Error
+
+    post:
+      summary: Create a new organization
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Organization name (2-50 characters)
+                  minLength: 2
+                  maxLength: 50
+                description:
+                  type: string
+                  description: Organization description (max 500 characters)
+                  maxLength: 500
+                settings:
+                  type: object
+                  properties:
+                    maxMembers:
+                      type: number
+                      description: Maximum number of members allowed (1-100)
+                      minimum: 1
+                      maximum: 100
+                      default: 10
+                    allowedDomains:
+                      type: array
+                      description: List of allowed email domains for members
+                      items:
+                        type: string
+                        format: email
+      responses:
+        '201':
+          description: Organization created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Organization created successfully
+                  status:
+                    type: number
+                    example: 201
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        example: 5f7d3a2b9d3e2a1b3c4d5e6f
+                      name:
+                        type: string
+                        example: My Organization
+                      description:
+                        type: string
+                        example: A great organization
+                      ownerId:
+                        type: string
+                        example: 5f7d3a2b9d3e2a1b3c4d5e6f
+                      settings:
+                        type: object
+                        properties:
+                          maxMembers:
+                            type: number
+                            example: 10
+                          allowedDomains:
+                            type: array
+                            items:
+                              type: string
+                              example: example.com
+                          inviteCode:
+                            type: string
+                            example: ABC123XY
+                      members:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            user:
+                              type: string
+                              example: 5f7d3a2b9d3e2a1b3c4d5e6f
+                            role:
+                              type: string
+                              enum: [manager, team_member]
+                              example: manager
+                            status:
+                              type: string
+                              enum: [pending, active, removed]
+                              example: active
+                            joinedAt:
+                              type: string
+                              format: date-time
+                            invitedBy:
+                              type: string
+                              example: 5f7d3a2b9d3e2a1b3c4d5e6f
+        '401':
+          description: Unauthorized - User not found
+        '403':
+          description: Forbidden - Maximum organizations limit reached
+        '422':
+          description: Validation Error
+
+  /organizations/{organizationId}:
+    get:
+      summary: Get organization details
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: organizationId
+          required: true
+          schema:
+            type: string
+          description: ID of the organization to retrieve
+      responses:
+        '200':
+          description: Organization retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Organization retrieved successfully
+                  status:
+                    type: number
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Organization'
+        '401':
+          description: Unauthorized - User not found
+        '404':
+          description: Organization not found or you do not have access
+        '422':
+          description: Validation Error
+
+    patch:
+      summary: Update organization details
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: organizationId
+          required: true
+          schema:
+            type: string
+          description: ID of the organization to update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Organization name (2-50 characters)
+                  minLength: 2
+                  maxLength: 50
+                description:
+                  type: string
+                  description: Organization description (max 500 characters)
+                  maxLength: 500
+                settings:
+                  type: object
+                  properties:
+                    maxMembers:
+                      type: number
+                      description: Maximum number of members allowed (1-100)
+                      minimum: 1
+                      maximum: 100
+                    allowedDomains:
+                      type: array
+                      description: List of allowed email domains for members
+                      items:
+                        type: string
+                        format: email
+      responses:
+        '200':
+          description: Organization updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Organization updated successfully
+                  status:
+                    type: number
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Organization'
+        '401':
+          description: Unauthorized - User not found
+        '404':
+          description: Organization not found or you are not the owner
+        '422':
+          description: Validation Error
+
+    delete:
+      summary: Delete organization
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: organizationId
+          required: true
+          schema:
+            type: string
+          description: ID of the organization to delete
+      responses:
+        '200':
+          description: Organization deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Organization deleted successfully
+                  status:
+                    type: number
+                    example: 200
+                  data:
+                    type: null
+                    example: null
+        '401':
+          description: Unauthorized - User not found
+        '404':
+          description: Organization not found or you are not the owner
+        '422':
+          description: Validation Error
+
+  /organizations/{organizationId}/invite:
+    post:
+      summary: Invite members to an organization
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: organizationId
+          required: true
+          schema:
+            type: string
+          description: ID of the organization to invite members to
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                emails:
+                  type: array
+                  description: List of email addresses to invite
+                  items:
+                    type: string
+                    format: email
+                  minItems: 1
+                role:
+                  type: string
+                  description: Role to assign to invited members
+                  enum: [manager, team_member]
+                  default: team_member
+      responses:
+        '200':
+          description: Invitations sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Invitations sent successfully
+                  status:
+                    type: number
+                    example: 200
+                  data:
+                    type: object
+                    properties:
+                      inviteResults:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            email:
+                              type: string
+                              example: user@example.com
+                            status:
+                              type: string
+                              enum: [invited, already_member]
+                              example: invited
+        '400':
+          description: Bad Request - Invalid emails or member limit exceeded
+        '401':
+          description: Unauthorized - User not found
+        '403':
+          description: Forbidden - Insufficient permissions
+        '404':
+          description: Organization not found
+        '422':
+          description: Validation Error
+
+  /organizations/join:
+    post:
+      summary: Join an organization using an invite code
+      tags:
+        - Organizations
+      security:
+        - Authorization: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: The invite code for the organization
+                  example: ABC123XY
+                email:
+                  type: string
+                  format: email
+                  description: The email address that received the invitation
+                  example: user@example.com
+              required:
+                - code
+                - email
+      responses:
+        '200':
+          description: Successfully joined organization
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Successfully joined organization
+                  status:
+                    type: number
+                    example: 200
+                  data:
+                    type: object
+                    properties:
+                      organization:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            example: 5f7d3a2b9d3e2a1b3c4d5e6f
+                          name:
+                            type: string
+                            example: My Organization
+                          role:
+                            type: string
+                            enum: [manager, team_member]
+                            example: team_member
+        '401':
+          description: Unauthorized - User not found
+        '404':
+          description: Invalid invite code or no pending invitation found
+        '422':
+          description: Validation Error
+
+  /organizations/{organizationId}/members:
+    get:
+      summary: Get organization members
+      tags:
+        - Organizations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the organization
+      responses:
+        200:
+          description: Members retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Members retrieved successfully
+                  status:
+                    type: integer
+                    example: 200
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        _id:
+                          type: string
+                          example: "5f9d7b3b9d3e2a1b3c5d7e8f"
+                        user:
+                          type: object
+                          properties:
+                            _id:
+                              type: string
+                              example: "5f9d7b3b9d3e2a1b3c5d7e8f"
+                            name:
+                              type: string
+                              example: "John Doe"
+                            email:
+                              type: string
+                              example: "john@example.com"
+                        role:
+                          type: string
+                          enum: [manager, team_member]
+                          example: "team_member"
+                        status:
+                          type: string
+                          enum: [pending, active, removed]
+                          example: "active"
+                        joinedAt:
+                          type: string
+                          format: date-time
+                          example: "2023-01-01T00:00:00.000Z"
+                        invitedBy:
+                          type: string
+                          example: "5f9d7b3b9d3e2a1b3c5d7e8f"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+  /organizations/{organizationId}/members/{memberId}/role:
+    patch:
+      summary: Update member role
+      tags:
+        - Organizations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the organization
+        - name: memberId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - role
+              properties:
+                role:
+                  type: string
+                  enum: [manager, team_member]
+                  example: "manager"
+      responses:
+        200:
+          description: Member role updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Member role updated successfully
+                  status:
+                    type: integer
+                    example: 200
+                  data:
+                    type: object
+                    properties:
+                      _id:
+                        type: string
+                        example: "5f9d7b3b9d3e2a1b3c5d7e8f"
+                      role:
+                        type: string
+                        enum: [manager, team_member]
+                        example: "manager"
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          description: Only organization owner can update member roles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+        422:
+          $ref: '#/components/responses/ValidationError'
+
+  /organizations/{organizationId}/members/{memberId}:
+    delete:
+      summary: Remove member from organization
+      tags:
+        - Organizations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the organization
+        - name: memberId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID of the member to remove
+      responses:
+        200:
+          description: Member removed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  error:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Member removed successfully
+                  status:
+                    type: integer
+                    example: 200
+                  data:
+                    type: null
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+        403:
+          description: Insufficient permissions or cannot remove owner/manager
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+  # Crypto Routes
+  /crypto/prices:
+    get:
+      summary: Get cryptocurrency prices
+      tags:
+        - Crypto
+      security:
+        - Authorization: []
+      parameters:
+        - in: query
+          name: currencies
+          schema:
+            type: string
+          description: Comma-separated list of cryptocurrency symbols (e.g., BTC,ETH,XRP)
+      responses:
+        '200':
+          description: Cryptocurrency prices retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        symbol:
+                          type: string
+                          example: "BTC"
+                        price:
+                          type: number
+                          example: 45830.21
+                        lastUpdated:
+                          type: string
+                          format: date-time
+                          example: "2023-04-30T10:15:30.123Z"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2023-04-30T10:15:30.123Z"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /crypto/prices/{symbol}:
+    get:
+      summary: Get price for a specific cryptocurrency
+      tags:
+        - Crypto
+      security:
+        - Authorization: []
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema:
+            type: string
+          description: Cryptocurrency symbol (e.g., BTC)
+      responses:
+        '200':
+          description: Cryptocurrency price retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      symbol:
+                        type: string
+                        example: "BTC"
+                      price:
+                        type: number
+                        example: 45830.21
+                      lastUpdated:
+                        type: string
+                        format: date-time
+                        example: "2023-04-30T10:15:30.123Z"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  # Compliance Routes
+  /compliance/transactions:
+    get:
+      summary: Get compliance transactions
+      tags:
+        - Compliance
+      security:
+        - Authorization: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+          description: Transaction status filter. Can be a single status or comma-separated list of statuses (e.g., "APPROVED,CLOSED_WITH_NOTE"). Valid values are UNASSIGNED, UNREVIEWED, IN_REVIEW, APPROVED, HOLD, CLOSED_WITH_NOTE, CLOSED_WITH_SAR
+        - in: query
+          name: blockchain
+          schema:
+            type: string
+          description: Blockchain filter
+        - in: query
+          name: clientId
+          schema:
+            type: string
+          description: Client ID filter
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+          description: Page number for pagination
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+          description: Number of items per page
+      responses:
+        '200':
+          description: Transactions retrieved successfully
+
+components:
+  securitySchemes:
+    Authorization:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: boolean
+          example: true
+        status:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+          example: null
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 5f7d3a2b9d3e2a1b3c4d5e6f
+        name:
+          type: string
+          example: My Organization
+        description:
+          type: string
+          example: A great organization
+        ownerId:
+          type: string
+          example: 5f7d3a2b9d3e2a1b3c4d5e6f
+        settings:
+          type: object
+          properties:
+            maxMembers:
+              type: number
+              example: 10
+            allowedDomains:
+              type: array
+              items:
+                type: string
+                example: example.com
+            inviteCode:
+              type: string
+              example: ABC123XY
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              user:
+                type: string
+                example: 5f7d3a2b9d3e2a1b3c4d5e6f
+              role:
+                type: string
+                enum: [manager, team_member]
+                example: manager
+              status:
+                type: string
+                enum: [pending, active, removed]
+                example: active
+              joinedAt:
+                type: string
+                format: date-time
+              invitedBy:
+                type: string
+                example: 5f7d3a2b9d3e2a1b3c4d5e6f

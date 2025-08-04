@@ -1,0 +1,44 @@
+{
+  "bindings": [
+    {
+      "members": [
+        "projectEditor:blockscout-425320",
+        "projectOwner:blockscout-425320"
+      ],
+      "role": "roles/storage.legacyBucketOwner"
+    },
+    {
+      "members": [
+        "projectViewer:blockscout-425320"
+      ],
+      "role": "roles/storage.legacyBucketReader"
+    },
+    {
+      "members": [
+        "projectEditor:blockscout-425320",
+        "projectOwner:blockscout-425320"
+      ],
+      "role": "roles/storage.legacyObjectOwner"
+    },
+    {
+      "members": [
+        "projectViewer:blockscout-425320"
+      ],
+      "role": "roles/storage.legacyObjectReader"
+    },
+    {
+      "members": [
+        "serviceAccount:blockscout-gcp@blockscout-425320.iam.gserviceaccount.com",
+        "serviceAccount:logo-retriever@blockscout-425320.iam.gserviceaccount.com"
+      ],
+      "role": "roles/storage.objectViewer"
+    },
+    {
+      "role": "roles/storage.objectViewer",
+      "members": [
+        "allUsers"
+      ]
+    }
+  ],
+  "etag": "CAM="
+}

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Edge Colors Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .test-step {
+            margin: 15px 0;
+            padding: 10px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+        .test-step h4 {
+            margin: 0 0 10px 0;
+            color: #007bff;
+        }
+        .test-step ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .app-link {
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .app-link:hover {
+            background: #0056b3;
+        }
+        .color-preview {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            margin-right: 10px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🎨 Custom Edge Colors for Single Edges</h1>
+        
+        <div class="status info">
+            <strong>Feature Added:</strong> Users can now set custom colors for individual transaction edges in the FlowTrace graph.
+        </div>
+
+        <h2>How to Use Custom Edge Colors</h2>
+        
+        <div class="test-step">
+            <h4>1. Load the Application</h4>
+            <ul>
+                <li>Open the FlowTrace application</li>
+                <li>Verify the graph loads with nodes and connections visible</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>2. Access Edge Details</h4>
+            <ul>
+                <li>Click on any single connection/edge between nodes</li>
+                <li>A popup dialog will appear showing transaction details</li>
+                <li>Look for the "Customize Edge Color" button</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>3. Set Custom Color</h4>
+            <ul>
+                <li>Click the "Customize Edge Color" button</li>
+                <li>A color picker dialog will open with 12 predefined colors</li>
+                <li>Click on any color to apply it to the edge</li>
+                <li>The edge will immediately update with the new color</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>4. Available Colors</h4>
+            <ul>
+                <li><span class="color-preview" style="background: #6b7280;"></span>Gray (Default)</li>
+                <li><span class="color-preview" style="background: #8b5cf6;"></span>Purple</li>
+                <li><span class="color-preview" style="background: #06b6d4;"></span>Cyan</li>
+                <li><span class="color-preview" style="background: #10b981;"></span>Green</li>
+                <li><span class="color-preview" style="background: #f59e0b;"></span>Yellow</li>
+                <li><span class="color-preview" style="background: #ef4444;"></span>Red</li>
+                <li><span class="color-preview" style="background: #84cc16;"></span>Lime</li>
+                <li><span class="color-preview" style="background: #ec4899;"></span>Pink</li>
+                <li><span class="color-preview" style="background: #f97316;"></span>Orange</li>
+                <li><span class="color-preview" style="background: #6366f1;"></span>Indigo</li>
+                <li><span class="color-preview" style="background: #a855f7;"></span>Violet</li>
+                <li><span class="color-preview" style="background: #0891b2;"></span>Sky</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>5. Reset to Default</h4>
+            <ul>
+                <li>In the color picker dialog, click "Reset to Default"</li>
+                <li>The edge will return to the default gray color</li>
+                <li>This removes the custom color setting</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>6. Test Multiple Edges</h4>
+            <ul>
+                <li>Try setting different colors for multiple edges</li>
+                <li>Verify that each edge maintains its own color independently</li>
+                <li>Test with both single connections and multiple connections between the same nodes</li>
+            </ul>
+        </div>
+
+        <div class="status success">
+            <strong>Expected Result:</strong> Individual edges can be colored independently, making it easier to distinguish between different transactions and highlight important connections.
+        </div>
+
+        <div class="status warning">
+            <strong>Note:</strong> Custom colors are applied to individual connections using their transaction hash (txHash) as a unique identifier. Colors persist until manually reset or the connection is modified.
+        </div>
+
+        <a href="http://localhost:3001" class="app-link" target="_blank">
+            🚀 Open FlowTrace Application
+        </a>
+
+        <h3>Technical Implementation</h3>
+        <div class="test-step">
+            <h4>Data Structure Changes</h4>
+            <p>The <code>Connection</code> interface now includes an optional <code>customColor</code> property:</p>
+            <pre><code>interface Connection {
+  // ... existing properties
+  customColor?: string // Custom color for individual edges
+}</code></pre>
+        </div>
+
+        <div class="test-step">
+            <h4>Rendering Logic</h4>
+            <p>The rendering logic prioritizes custom colors in this order:</p>
+            <ul>
+                <li><strong>Individual Connection:</strong> <code>connection.customColor</code></li>
+                <li><strong>Group Custom Colors:</strong> <code>customEdgeColors[connectionKey]</code></li>
+                <li><strong>Default:</strong> Gray color based on theme</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>Utility Functions</h4>
+            <p>Three utility functions are available for managing custom colors:</p>
+            <ul>
+                <li><code>setConnectionCustomColor(txHash, color)</code> - Set custom color for a connection</li>
+                <li><code>clearConnectionCustomColor(txHash)</code> - Remove custom color from a connection</li>
+                <li><code>getConnectionCustomColor(txHash)</code> - Get current custom color for a connection</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>User Interface</h4>
+            <p>The feature is accessible through:</p>
+            <ul>
+                <li>Click on any single connection to open edge details</li>
+                <li>"Customize Edge Color" button in the edge details dialog</li>
+                <li>Color picker with 12 predefined colors</li>
+                <li>"Reset to Default" option to remove custom colors</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html> 

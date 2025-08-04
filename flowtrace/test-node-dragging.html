@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node Dragging Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .test-step {
+            margin: 15px 0;
+            padding: 10px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+        .test-step h4 {
+            margin: 0 0 10px 0;
+            color: #007bff;
+        }
+        .test-step ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .app-link {
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .app-link:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🔧 Node Dragging Fix Verification</h1>
+        
+        <div class="status info">
+            <strong>Fix Applied:</strong> The node dragging issue has been resolved by separating node dragging from canvas panning in the custom canvas implementation.
+        </div>
+
+        <h2>Test Steps</h2>
+        
+        <div class="test-step">
+            <h4>1. Load the Application</h4>
+            <ul>
+                <li>Open the FlowTrace application</li>
+                <li>Verify the graph loads with nodes visible</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>2. Test Zoom Functionality</h4>
+            <ul>
+                <li>Use mouse wheel or zoom controls to zoom in (2x-5x)</li>
+                <li>Verify nodes scale properly and remain in correct positions</li>
+                <li>Verify canvas panning works when clicking on empty space</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>3. Test Individual Node Dragging</h4>
+            <ul>
+                <li>While zoomed in, click and drag on individual nodes</li>
+                <li>Verify only the selected node moves, not the entire canvas</li>
+                <li>Test with different node types (wallet, exchange, bridge, etc.)</li>
+                <li>Verify connections update properly when nodes are moved</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>4. Test Canvas Panning</h4>
+            <ul>
+                <li>Click and drag on empty space (not on nodes)</li>
+                <li>Verify the entire canvas pans without affecting node positions</li>
+                <li>Verify panning works at different zoom levels</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>5. Test Edge Cases</h4>
+            <ul>
+                <li>Test dragging nodes near the edges of the canvas</li>
+                <li>Test rapid zoom in/out while dragging</li>
+                <li>Test with multiple nodes close together</li>
+            </ul>
+        </div>
+
+        <div class="status success">
+            <strong>Expected Result:</strong> Nodes should move independently when dragged, regardless of zoom level. Canvas panning should only occur when clicking on empty space.
+        </div>
+
+        <div class="status warning">
+            <strong>Note:</strong> This is a custom canvas implementation, not React Flow. The fix addresses the specific state management issue that was causing node dragging to interfere with canvas panning.
+        </div>
+
+        <a href="http://localhost:3001" class="app-link" target="_blank">
+            🚀 Open FlowTrace Application
+        </a>
+
+        <h3>Technical Details of the Fix</h3>
+        <div class="test-step">
+            <h4>Root Cause</h4>
+            <p>The issue was caused by setting both <code>draggedNode</code> (for node dragging) and <code>isDragging</code> (for canvas panning) simultaneously when a node was clicked, creating a conflict between the two dragging modes.</p>
+        </div>
+
+        <div class="test-step">
+            <h4>Solution</h4>
+            <p>Separated the concerns by:</p>
+            <ul>
+                <li><strong>Node Dragging:</strong> Only set <code>draggedNode</code> when clicking on nodes (not <code>isDragging</code>)</li>
+                <li><strong>Canvas Panning:</strong> Only set <code>isDragging</code> when clicking on empty space (not <code>draggedNode</code>)</li>
+                <li><strong>Event Handling:</strong> Mouse move handler checks these states separately and handles them independently</li>
+            </ul>
+        </div>
+
+        <div class="test-step">
+            <h4>Code Changes</h4>
+            <p>Modified <code>components/network-graph.tsx</code>:</p>
+            <ul>
+                <li>Removed <code>setIsDragging(true)</code> from node click handler</li>
+                <li>Maintained coordinate transformation logic for proper zoom handling</li>
+                <li>Ensured pan update logic only triggers for canvas dragging</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html> 

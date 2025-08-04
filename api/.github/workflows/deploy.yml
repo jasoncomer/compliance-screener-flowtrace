@@ -1,0 +1,68 @@
+name: Deploy Blockscout API
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
+      deployments: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm ci
+      continue-on-error: false
+
+    - name: Build
+      run: npm run build
+      env:
+        NODE_ENV: production
+
+    - name: Copy .env file
+      run: cp /home/ubuntu/blockscout-api/.env.production /home/ubuntu/actions-runner/_work/blockscout-api/blockscout-api/.env
+
+    - name: Restart PM2
+      run: pm2 reload 0
+
+    - name: Notify Slack - Deployment Success
+      if: success()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        fields: workflow,job,commit,repo,ref,author,took
+        custom_payload: |
+          {
+            text: "[Blockscout Api] Deployment Successful ✅\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref_name }}"
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYMENTS_WEBHOOK_URL }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Notify Slack - Deployment Failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        fields: workflow,job,commit,repo,ref,author,took
+        custom_payload: |
+          {
+            text: "[Blockscout Api] Deployment Failed ❌\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref_name }}"
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYMENTS_WEBHOOK_URL }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

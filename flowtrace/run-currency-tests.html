@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Currency Update Test Suite</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        .test-section h3 {
+            color: #555;
+            margin-top: 0;
+        }
+        .test-section p {
+            color: #666;
+            line-height: 1.6;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.secondary {
+            background: #6c757d;
+        }
+        button.secondary:hover {
+            background: #545b62;
+        }
+        .instructions {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #007bff;
+        }
+        .warning {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+        .success {
+            background: #d4edda;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #28a745;
+        }
+        .error {
+            background: #f8d7da;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #dc3545;
+        }
+        .log-output {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 15px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.running {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Currency Update Test Suite</h1>
+        
+        <div class="instructions">
+            <strong>Instructions:</strong>
+            <ol>
+                <li>Make sure the FlowTrace app is running at <code>http://localhost:3001</code></li>
+                <li>Open the app in another tab/window</li>
+                <li>Click the buttons below to run different tests</li>
+                <li>Follow the prompts in the console</li>
+                <li>Check the results below</li>
+            </ol>
+        </div>
+
+        <div class="test-section">
+            <h3>🔍 Debug Currency Issue</h3>
+            <p>This test will monitor all currency-related operations and help identify where the update issue is occurring.</p>
+            <button onclick="runDebugTest()">Run Debug Test</button>
+            <button onclick="showDebugReport()" class="secondary">Show Debug Report</button>
+            <div id="debug-status" class="status"></div>
+            <div id="debug-output" class="log-output" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🧪 Manual Currency Test</h3>
+            <p>This test will guide you through manually testing currency changes step by step.</p>
+            <button onclick="runManualTest()">Run Manual Test</button>
+            <button onclick="showManualReport()" class="secondary">Show Manual Report</button>
+            <div id="manual-status" class="status"></div>
+            <div id="manual-output" class="log-output" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🤖 Automated Test</h3>
+            <p>This test will attempt to automatically test currency changes (may not work perfectly due to canvas interactions).</p>
+            <button onclick="runAutomatedTest()">Run Automated Test</button>
+            <button onclick="showAutomatedReport()" class="secondary">Show Automated Report</button>
+            <div id="automated-status" class="status"></div>
+            <div id="automated-output" class="log-output" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 All Tests Report</h3>
+            <p>View comprehensive results from all tests.</p>
+            <button onclick="generateFullReport()">Generate Full Report</button>
+            <div id="full-report" class="log-output" style="display: none;"></div>
+        </div>
+
+        <div class="warning">
+            <strong>Note:</strong> These tests require the FlowTrace app to be running and accessible. Make sure you have the app open in another tab before running the tests.
+        </div>
+    </div>
+
+    <script>
+        // Test state
+        let testResults = {
+            debug: null,
+            manual: null,
+            automated: null
+        };
+
+        // Utility functions
+        function updateStatus(elementId, status, message) {
+            const element = document.getElementById(elementId);
+            element.className = `status ${status}`;
+            element.textContent = message;
+        }
+
+        function showOutput(elementId, content) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.textContent = content;
+        }
+
+        function captureConsoleLogs() {
+            const logs = [];
+            const originalLog = console.log;
+            const originalError = console.error;
+            const originalWarn = console.warn;
+
+            console.log = (...args) => {
+                logs.push(`[LOG] ${args.join(' ')}`);
+                originalLog.apply(console, args);
+            };
+
+            console.error = (...args) => {
+                logs.push(`[ERROR] ${args.join(' ')}`);
+                originalError.apply(console, args);
+            };
+
+            console.warn = (...args) => {
+                logs.push(`[WARN] ${args.join(' ')}`);
+                originalWarn.apply(console, args);
+            };
+
+            return {
+                logs,
+                restore: () => {
+                    console.log = originalLog;
+                    console.error = originalError;
+                    console.warn = originalWarn;
+                }
+            };
+        }
+
+        // Debug test
+        async function runDebugTest() {
+            updateStatus('debug-status', 'running', 'Running debug test...');
+            
+            const logger = captureConsoleLogs();
+            
+            try {
+                // Load and run debug script
+                const response = await fetch('debug-currency-issue.js');
+                const script = await response.text();
+                
+                // Execute the script
+                eval(script);
+                
+                updateStatus('debug-status', 'success', 'Debug test completed! Check console for results.');
+                showOutput('debug-output', logger.logs.join('\n'));
+                
+                testResults.debug = {
+                    status: 'success',
+                    logs: logger.logs,
+                    timestamp: new Date().toISOString()
+                };
+                
+            } catch (error) {
+                updateStatus('debug-status', 'error', `Debug test failed: ${error.message}`);
+                showOutput('debug-output', `Error: ${error.message}\n\nLogs:\n${logger.logs.join('\n')}`);
+                
+                testResults.debug = {
+                    status: 'error',
+                    error: error.message,
+                    logs: logger.logs,
+                    timestamp: new Date().toISOString()
+                };
+            } finally {
+                logger.restore();
+            }
+        }
+
+        // Manual test
+        async function runManualTest() {
+            updateStatus('manual-status', 'running', 'Running manual test...');
+            
+            const logger = captureConsoleLogs();
+            
+            try {
+                // Load and run manual test script
+                const response = await fetch('simple-currency-test.js');
+                const script = await response.text();
+                
+                // Execute the script
+                eval(script);
+                
+                updateStatus('manual-status', 'success', 'Manual test completed! Follow console instructions.');
+                showOutput('manual-output', logger.logs.join('\n'));
+                
+                testResults.manual = {
+                    status: 'success',
+                    logs: logger.logs,
+                    timestamp: new Date().toISOString()
+                };
+                
+            } catch (error) {
+                updateStatus('manual-status', 'error', `Manual test failed: ${error.message}`);
+                showOutput('manual-output', `Error: ${error.message}\n\nLogs:\n${logger.logs.join('\n')}`);
+                
+                testResults.manual = {
+                    status: 'error',
+                    error: error.message,
+                    logs: logger.logs,
+                    timestamp: new Date().toISOString()
+                };
+            } finally {
+                logger.restore();
+            }
+        }
+
+        // Automated test
+        async function runAutomatedTest() {
+            updateStatus('automated-status', 'running', 'Running automated test...');
+            
+            const logger = captureConsoleLogs();
+            
+            try {
+                // Load and run automated test script
+                const response = await fetch('test-connection-modal.js');
+                const script = await response.text();
+                
+                // Execute the script
+                eval(script);
+                
+                updateStatus('automated-status', 'success', 'Automated test completed! Check console for results.');
+                showOutput('automated-output', logger.logs.join('\n'));
+                
+                testResults.automated = {
+                    status: 'success',
+                    logs: logger.logs,
+                    timestamp: new Date().toISOString()
+                };
+                
+            } catch (error) {
+                updateStatus('automated-status', 'error', `Automated test failed: ${error.message}`);
+                showOutput('automated-output', `Error: ${error.message}\n\nLogs:\n${logger.logs.join('\n')}`);
+                
+                testResults.automated = {
+                    status: 'error',
+                    error: error.message,
+                    logs: logger.logs,
+                    timestamp: new Date().toISOString()
+                };
+            } finally {
+                logger.restore();
+            }
+        }
+
+        // Report functions
+        function showDebugReport() {
+            if (testResults.debug) {
+                const report = `Debug Test Report (${testResults.debug.timestamp})
+Status: ${testResults.debug.status}
+${testResults.debug.error ? `Error: ${testResults.debug.error}\n` : ''}
+Logs:
+${testResults.debug.logs.join('\n')}`;
+                showOutput('debug-output', report);
+            } else {
+                showOutput('debug-output', 'No debug test results available. Run the debug test first.');
+            }
+        }
+
+        function showManualReport() {
+            if (testResults.manual) {
+                const report = `Manual Test Report (${testResults.manual.timestamp})
+Status: ${testResults.manual.status}
+${testResults.manual.error ? `Error: ${testResults.manual.error}\n` : ''}
+Logs:
+${testResults.manual.logs.join('\n')}`;
+                showOutput('manual-output', report);
+            } else {
+                showOutput('manual-output', 'No manual test results available. Run the manual test first.');
+            }
+        }
+
+        function showAutomatedReport() {
+            if (testResults.automated) {
+                const report = `Automated Test Report (${testResults.automated.timestamp})
+Status: ${testResults.automated.status}
+${testResults.automated.error ? `Error: ${testResults.automated.error}\n` : ''}
+Logs:
+${testResults.automated.logs.join('\n')}`;
+                showOutput('automated-output', report);
+            } else {
+                showOutput('automated-output', 'No automated test results available. Run the automated test first.');
+            }
+        }
+
+        function generateFullReport() {
+            const report = `FULL TEST REPORT
+Generated: ${new Date().toISOString()}
+
+=== DEBUG TEST ===
+${testResults.debug ? 
+    `Status: ${testResults.debug.status}
+Timestamp: ${testResults.debug.timestamp}
+${testResults.debug.error ? `Error: ${testResults.debug.error}\n` : ''}
+Logs: ${testResults.debug.logs.length} entries` : 
+    'Not run'}
+
+=== MANUAL TEST ===
+${testResults.manual ? 
+    `Status: ${testResults.manual.status}
+Timestamp: ${testResults.manual.timestamp}
+${testResults.manual.error ? `Error: ${testResults.manual.error}\n` : ''}
+Logs: ${testResults.manual.logs.length} entries` : 
+    'Not run'}
+
+=== AUTOMATED TEST ===
+${testResults.automated ? 
+    `Status: ${testResults.automated.status}
+Timestamp: ${testResults.automated.timestamp}
+${testResults.automated.error ? `Error: ${testResults.automated.error}\n` : ''}
+Logs: ${testResults.automated.logs.length} entries` : 
+    'Not run'}
+
+=== SUMMARY ===
+Tests Run: ${Object.keys(testResults).filter(k => testResults[k]).length}/3
+Successful: ${Object.keys(testResults).filter(k => testResults[k] && testResults[k].status === 'success').length}
+Failed: ${Object.keys(testResults).filter(k => testResults[k] && testResults[k].status === 'error').length}`;
+
+            showOutput('full-report', report);
+        }
+
+        // Initialize
+        console.log('Currency Update Test Suite loaded. Ready to run tests.');
+    </script>
+</body>
+</html> 
