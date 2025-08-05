@@ -62,9 +62,12 @@ interface NodeExpansionDialogProps {
   onClose: () => void
   existingConnections?: any[] // Add existing connections to check for already processed transactions
   onUpdateNodeTransactions?: (nodeId: string, transactionCount: number) => void // Callback to update node's availableTransactions
+  hideSpam?: boolean // Add spam filter prop
+  isFirstNode?: boolean // Indicates if this is the first node on the graph
 }
 
-export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingConnections = [], onUpdateNodeTransactions }: NodeExpansionDialogProps) {
+export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingConnections = [], onUpdateNodeTransactions, hideSpam = false, isFirstNode = false }: NodeExpansionDialogProps) {
+
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTransactions, setSelectedTransactions] = useState<Set<string>>(new Set())
   const [sortBy, setSortBy] = useState<"entityName" | "entityId" | "amount" | "date" | "risk" | "entityType" | "direction" | "txId">("date")
@@ -90,6 +93,21 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
   // Ref to track if transactions have been loaded for the current node
   const loadedNodeRef = useRef<string | null>(null);
+  
+  // Spam filter function - same logic as in main page
+  const isSpamTransaction = (transaction: Transaction) => {
+    if (!hideSpam) return false;
+    
+    // Check if transaction is after 2015-01-01
+    const transactionDate = new Date(transaction.date);
+    const spamCutoffDate = new Date('2015-01-01');
+    
+    if (transactionDate < spamCutoffDate) return false;
+    
+    // Check if USD value is under $1
+    const usdValue = parseFloat(transaction.usdValue?.replace(/[$,]/g, '') || '0');
+    return usdValue < 1;
+  };
   
   // Add a timeout to reset loading state if it gets stuck
   useEffect(() => {
@@ -283,15 +301,15 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
         // Try to fetch transaction data with fallback
         let transactionData: any = null;
         try {
-          setLoadingProgress({current: 0, total: 1, step: 'Fetching transaction data...'});
+          setLoadingProgress({current: 0, total: 1, step: 'Fetching input data...'});
           // Use node.address instead of node.id for API calls
           const addressToFetch = node.address || node.id.replace('searched_', '');
           console.log('Fetching transactions for address:', addressToFetch);
           const transactionDataPromise = fetchTransactionData(addressToFetch, 1, 50);
           transactionData = await transactionDataPromise as any;
-          setLoadingProgress({current: 1, total: 1, step: 'Transaction data loaded successfully'});
+          setLoadingProgress({current: 1, total: 1, step: 'Input data loaded successfully'});
         } catch (error) {
-          console.log('Transaction data fetch failed, using fallback data');
+          console.log('Input data fetch failed, using fallback data');
           captureApiError(error, 'NodeExpansion-Transactions');
           // Use fallback data structure
           transactionData = {
@@ -307,7 +325,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               }
             ]
           };
-          setLoadingProgress({current: 1, total: 1, step: 'Using fallback transaction data'});
+          setLoadingProgress({current: 1, total: 1, step: 'Using fallback input data'});
         }
         
         if (transactionData && transactionData.txs) {
@@ -346,7 +364,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                       if (address && item.entity) {
                         // Store the entity name and cospend_id for SOT matching
                         addressEntities[address] = {
-                          name: item.entity,
+                          name: item.entity_proper_name || item.entity,
                           cospend_id: item.cospend_id || address
                         };
                         // Extract logo if available
@@ -417,7 +435,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                     const batch = addressArray.slice(i, i + batchSize);
                     const batchPromises = batch.map(async (address) => {
                       try {
-                        const individualRiskData = await fetchRiskScoringData(address, 'address') as any;
+                        const individualRiskData = await fetchRiskScoringData(address) as any;
                         if (individualRiskData && individualRiskData.success && individualRiskData.data) {
                           const overallRisk = individualRiskData.data.overallRisk;
                           return { address, risk: overallRisk > 0.4 ? 'high' : overallRisk > 0.2 ? 'medium' : 'low' };
@@ -538,19 +556,23 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               const localLogo = getSafeLogoPath(entityName);
               const logoPath = apiLogo || sotLogo || localLogo;
               
+              // For incoming transactions, find the specific output amount that went to the target address
+              const targetOutput = tx.outputs?.find((out: any) => out.addr === nodeAddress);
+              const specificAmount = targetOutput ? targetOutput.amt : tx.output_amt;
+              
               const transaction: Transaction = {
                 id: `tx_in_${index}`,
                 address: inputAddress,
                 entityId: entityId,
                 entityName: entityName,
-                amount: (tx.output_amt / 100000000).toFixed(8),
+                amount: (specificAmount / 100000000).toFixed(8),
                 currency: 'BTC',
-                date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
+                date: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString().split('T')[0] : 'Unknown',
                 txHash: tx.txid,
                 txId: tx.txid,
-                usdValue: calculateUSDValue(tx.output_amt / 100000000),
+                usdValue: tx.value_usd ? formatUSD(tx.value_usd) : calculateUSDValue(specificAmount / 100000000),
                 risk,
-                transactionCount: tx.input_cnt + tx.output_cnt,
+                transactionCount: tx.input_cnt,
                 entityType: entityType,
                 entity_type: entityType,
                 entity_tags: entityTags,
@@ -641,6 +663,10 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 }
               }
               
+              // For outgoing transactions, find the specific input amount that came from the target address
+              const targetInput = tx.inputs?.find((inp: any) => inp.addr === nodeAddress);
+              const specificAmount = targetInput ? targetInput.amt : tx.input_amt;
+              
               const localLogo = getSafeLogoPath(entityName);
               const logoPath = apiLogo || sotLogo || localLogo;
               
@@ -649,14 +675,14 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 address: outputAddress,
                 entityId: entityId,
                 entityName: entityName,
-                amount: (tx.output_amt / 100000000).toFixed(8),
+                amount: (specificAmount / 100000000).toFixed(8),
                 currency: 'BTC',
-                date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
+                date: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString().split('T')[0] : 'Unknown',
                 txHash: tx.txid,
                 txId: tx.txid,
-                usdValue: calculateUSDValue(tx.output_amt / 100000000),
+                usdValue: tx.value_usd ? formatUSD(tx.value_usd) : calculateUSDValue(specificAmount / 100000000),
                 risk,
-                transactionCount: tx.input_cnt + tx.output_cnt,
+                transactionCount: tx.input_cnt,
                 entityType: entityType,
                 entity_type: entityType,
                 entity_tags: entityTags,
@@ -689,6 +715,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
           setAllTransactions(processedTransactions);
           
           // Update the node's availableTransactions property if it's currently 0
+          // Use the full transaction count, not the filtered count
           if (node && (node.availableTransactions === 0 || node.availableTransactions === undefined) && processedTransactions.length > 0) {
             console.log(`Updating node ${node.id} availableTransactions from ${node.availableTransactions} to ${processedTransactions.length}`);
             onUpdateNodeTransactions?.(nodeId, processedTransactions.length);
@@ -848,12 +875,26 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                   }
                 ]
               };
-              setLoadingProgress({current: 1, total: 1, step: 'Using fallback transaction data'});
+              setLoadingProgress({current: 1, total: 1, step: 'Using fallback input data'});
             }
             
             if (transactionData && transactionData.txs) {
               console.log('Found transactions:', transactionData.txs.length);
               console.log('Transaction data structure:', transactionData);
+              
+              // Debug: Look for specific transaction c89cdbe4320a
+              const debugTx = transactionData.txs.find((tx: any) => tx.txid === 'c89cdbe4320a');
+              if (debugTx) {
+                console.log('=== DEBUG: Transaction c89cdbe4320a ===');
+                console.log('Full transaction:', JSON.stringify(debugTx, null, 2));
+                console.log('Inputs:', debugTx.inputs);
+                console.log('Outputs:', debugTx.outputs);
+                console.log('Input amounts:', debugTx.inputs?.map((inp: any) => ({ addr: inp.addr, amt: inp.amt })));
+                console.log('Output amounts:', debugTx.outputs?.map((out: any) => ({ addr: out.addr, amt: out.amt })));
+                console.log('Total input amount:', debugTx.input_amt);
+                console.log('Total output amount:', debugTx.output_amt);
+                console.log('=== END DEBUG ===');
+              }
               
               // Collect all unique addresses from inputs and outputs
               const allAddresses = new Set<string>();
@@ -967,7 +1008,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                         const batch = addressArray.slice(i, i + batchSize);
                         const batchPromises = batch.map(async (address) => {
                           try {
-                            const individualRiskData = await fetchRiskScoringData(address, 'address') as any;
+                            const individualRiskData = await fetchRiskScoringData(address) as any;
                             if (individualRiskData && individualRiskData.success && individualRiskData.data) {
                               const overallRisk = individualRiskData.data.overallRisk;
                               return { address, risk: overallRisk > 0.4 ? 'high' : overallRisk > 0.2 ? 'medium' : 'low' };
@@ -1034,6 +1075,40 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                   return;
                 }
                 
+                // Skip pass-through transactions (same cospend_id for input and output)
+                // A pass-through transaction is when the same entity (same cospend_id) appears as both input and output
+                if (nodeInInputs && nodeInOutputs) {
+                  // Get the cospend_id for the node address
+                  const nodeEntityData = addressEntities[nodeAddress];
+                  const nodeCospendId = nodeEntityData?.cospend_id || nodeAddress;
+                  
+                  // Check if any input has the same cospend_id as the node
+                  const inputCospendIds = tx.inputs?.map((inp: any) => {
+                    const inputEntityData = addressEntities[inp.addr];
+                    return inputEntityData?.cospend_id || inp.addr;
+                  }) || [];
+                  
+                  // Check if any output has the same cospend_id as the node
+                  const outputCospendIds = tx.outputs?.map((out: any) => {
+                    const outputEntityData = addressEntities[out.addr];
+                    return outputEntityData?.cospend_id || out.addr;
+                  }) || [];
+                  
+                  // If the same cospend_id appears in both inputs and outputs, it's a pass-through transaction
+                  const hasSameCospendId = inputCospendIds.some((inputCospendId: string) => 
+                    outputCospendIds.some((outputCospendId: string) => inputCospendId === outputCospendId)
+                  );
+                  
+                  if (hasSameCospendId) {
+                    console.log(`Skipping transaction ${index} - pass-through transaction (same cospend_id in input and output)`, {
+                      nodeCospendId,
+                      inputCospendIds,
+                      outputCospendIds
+                    });
+                    return;
+                  }
+                }
+                
                 // Skip if we've already processed this transaction
                 if (processedTxIds.has(tx.txid)) {
                   console.log(`Skipping transaction ${index} - already processed txid: ${tx.txid}`);
@@ -1047,6 +1122,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 if (nodeInOutputs) {
                   // This is an incoming transaction (node is receiving)
                   const inputAddress = tx.inputs?.[0]?.addr; // Use first input as representative
+                  // Skip change addresses - if input and output are the same, it's a change transaction
                   if (inputAddress && inputAddress !== nodeAddress) {
                       const entityData = addressEntities[inputAddress];
                       const entityId = entityData?.name?.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || `unknown_${inputAddress.slice(0, 8)}`;
@@ -1060,17 +1136,22 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                       let entityTags: string[] = [];
                       
                       if (sotData.length > 0) {
-                        // Try multiple matching strategies for incoming transactions
-                        const sotInfo = sotData.find(sot => 
-                          // Match by proper_name (case insensitive) - this is the primary matching strategy
-                          (sot.proper_name && sot.proper_name.toLowerCase() === entityName.toLowerCase()) ||
-                          // Match by entity_id (case insensitive)
-                          (sot.entity_id && sot.entity_id.toLowerCase() === entityName.toLowerCase()) ||
-                          // Match by entity_id containing the entity name
-                          (sot.entity_id && sot.entity_id.toLowerCase().includes(entityName.toLowerCase())) ||
-                          // Match by proper_name containing the entity name
-                          (sot.proper_name && sot.proper_name.toLowerCase().includes(entityName.toLowerCase()))
+                        // Primary matching strategy: match cospend_id with entity_id
+                        let sotInfo = sotData.find(sot => 
+                          sot.entity_id && sot.entity_id.toLowerCase() === cospendId.toLowerCase()
                         );
+                        
+                        // Fallback matching strategies if primary match fails
+                        if (!sotInfo) {
+                          sotInfo = sotData.find(sot => 
+                            // Match by proper_name (case insensitive)
+                            (sot.proper_name && sot.proper_name.toLowerCase() === entityName.toLowerCase()) ||
+                            // Match by entity_id containing the entity name
+                            (sot.entity_id && sot.entity_id.toLowerCase().includes(entityName.toLowerCase())) ||
+                            // Match by proper_name containing the entity name
+                            (sot.proper_name && sot.proper_name.toLowerCase().includes(entityName.toLowerCase()))
+                          );
+                        }
                         
                         // Debug: Log what we're trying to match
                         if (!sotInfo) {
@@ -1078,6 +1159,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                             inputAddress,
                             entityId,
                             entityName,
+                            cospendId,
                             addressPrefix: inputAddress.slice(0, 8),
                             expectedEntityId: `unknown_${inputAddress.slice(0, 8)}`,
                             availableSotIds: sotData.slice(0, 10).map(s => ({ 
@@ -1129,10 +1211,12 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                           console.log('Found SOT match for incoming transaction:', {
                             entityName,
                             entityId,
+                            cospendId,
                             sotEntityId: sotInfo.entity_id,
                             sotEntityType: sotInfo.entity_type,
                             sotEntityTags: sotInfo.entity_tags,
-                            sotProperName: sotInfo.proper_name
+                            sotProperName: sotInfo.proper_name,
+                            matchType: sotInfo.entity_id?.toLowerCase() === cospendId.toLowerCase() ? 'cospend_id_match' : 'fallback_match'
                           });
                           
                           if (sotInfo.proper_name) {
@@ -1153,6 +1237,10 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                         }
                       }
                       
+                      // Calculate the specific amount that went to the target address
+                      const targetOutput = tx.outputs?.find((out: any) => out.addr === nodeAddress);
+                      const specificAmount = targetOutput ? targetOutput.amt : 0;
+                      
                       // Get logo for this address
                       const apiLogo = addressLogos[inputAddress];
                       const sotLogo = sotData.find(sot => sot.address === inputAddress)?.logo;
@@ -1164,14 +1252,14 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                         address: inputAddress,
                         entityId: entityId,
                         entityName: finalEntityName,
-                        amount: (tx.output_amt / 100000000).toFixed(8),
+                        amount: (specificAmount / 100000000).toFixed(8),
                         currency: 'BTC',
-                        date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
+                        date: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString().split('T')[0] : 'Unknown',
                         txHash: tx.txid,
                         txId: tx.txid,
-                        usdValue: calculateUSDValue(tx.output_amt / 100000000),
+                        usdValue: tx.value_usd ? formatUSD(tx.value_usd) : calculateUSDValue(specificAmount / 100000000),
                         risk,
-                        transactionCount: tx.input_cnt + tx.output_cnt,
+                        transactionCount: tx.input_cnt,
                         entityType: entityType,
                         entity_type: entityType,
                         entity_tags: entityTags,
@@ -1184,9 +1272,19 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
                 // Process outputs (outgoing transactions) - only if node is in inputs
                 if (tx.outputs && nodeInInputs) {
-                  // Use first output as representative for the transaction
-                  const outputAddress = tx.outputs[0]?.addr;
-                  if (outputAddress && outputAddress !== nodeAddress) {
+                  // Find all output addresses that are different from the node address
+                  const otherOutputAddresses = tx.outputs
+                    .filter((out: any) => out.addr !== nodeAddress)
+                    .map((out: any) => out.addr);
+                  
+                  // Process each unique output address that's different from the node
+                  const processedOutputAddresses = new Set<string>();
+                  
+                  for (const outputAddress of otherOutputAddresses) {
+                    if (processedOutputAddresses.has(outputAddress)) {
+                      continue; // Skip if we've already processed this address
+                    }
+                    processedOutputAddresses.add(outputAddress);
                       const entityData = addressEntities[outputAddress];
                       const entityId = entityData?.name?.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || `unknown_${outputAddress.slice(0, 8)}`;
                       const entityName = entityData?.name || `Unknown Entity (${outputAddress.slice(0, 8)}...)`;
@@ -1244,26 +1342,72 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                       const localLogo = getSafeLogoPath(finalEntityName);
                       const logoPath = apiLogo || sotLogo || localLogo;
                       
-                      processedTransactions.push({
-                        id: `tx_out_${index}`,
-                        address: outputAddress,
-                        entityId: entityId,
-                        entityName: finalEntityName,
-                        amount: (tx.output_amt / 100000000).toFixed(8),
-                        currency: 'BTC',
-                        date: tx.block_date ? tx.block_date.split('T')[0] : 'Unknown',
-                        txHash: tx.txid,
-                        txId: tx.txid,
-                        usdValue: calculateUSDValue(tx.output_amt / 100000000),
-                        risk,
-                        transactionCount: tx.input_cnt + tx.output_cnt,
-                        entityType: entityType,
-                        entity_type: entityType,
-                        entity_tags: entityTags,
-                        logo: logoPath,
-                        direction: 'out' as const,
-                      });
-                      console.log(`Added outgoing transaction: ${nodeAddress} -> ${outputAddress}`);
+                      // For outgoing transactions, process each individual UTXO (input) from the target address
+                      const targetInputs = tx.inputs?.filter((inp: any) => inp.addr === nodeAddress) || [];
+                      
+                      if (targetInputs.length > 0) {
+                        // Process each UTXO separately
+                        targetInputs.forEach((targetInput: any, utxoIndex: number) => {
+                          const utxoAmount = targetInput.amt || 0;
+                          
+                          // Find the specific output amount for this address
+                          const specificOutput = tx.outputs?.find((out: any) => out.addr === outputAddress);
+                          const outputAmount = specificOutput ? specificOutput.amt : 0;
+                          
+                          // Debug: Log amounts for transaction c89cdbe4320a
+                          if (tx.txid === 'c89cdbe4320a') {
+                            console.log(`=== DEBUG: Processing output for ${outputAddress} ===`);
+                            console.log('UTXO amount:', utxoAmount);
+                            console.log('Output amount for this address:', outputAmount);
+                            console.log('All outputs:', tx.outputs?.map((out: any) => ({ addr: out.addr, amt: out.amt })));
+                            console.log('=== END DEBUG ===');
+                          }
+                          
+                          processedTransactions.push({
+                            id: `tx_out_${index}_utxo_${utxoIndex}_to_${outputAddress.slice(0, 8)}`,
+                            address: outputAddress,
+                            entityId: entityId,
+                            entityName: finalEntityName,
+                            amount: (outputAmount / 100000000).toFixed(8),
+                            currency: 'BTC',
+                            date: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString().split('T')[0] : 'Unknown',
+                            txHash: tx.txid,
+                            txId: tx.txid,
+                            usdValue: tx.value_usd ? formatUSD(tx.value_usd * (outputAmount / tx.output_amt)) : calculateUSDValue(outputAmount / 100000000),
+                            risk,
+                            transactionCount: 1, // Each UTXO is counted as 1 input
+                            entityType: entityType,
+                            entity_type: entityType,
+                            entity_tags: entityTags,
+                            logo: logoPath,
+                            direction: 'out' as const,
+                          });
+                          console.log(`Added outgoing transaction UTXO: ${nodeAddress} -> ${outputAddress}, amount: ${(outputAmount / 100000000).toFixed(8)} BTC`);
+                        });
+                      } else {
+                        // Fallback if no target inputs found
+                        const specificAmount = tx.input_amt || 0;
+                        processedTransactions.push({
+                          id: `tx_out_${index}`,
+                          address: outputAddress,
+                          entityId: entityId,
+                          entityName: finalEntityName,
+                          amount: (specificAmount / 100000000).toFixed(8),
+                          currency: 'BTC',
+                          date: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString().split('T')[0] : 'Unknown',
+                          txHash: tx.txid,
+                          txId: tx.txid,
+                          usdValue: tx.value_usd ? formatUSD(tx.value_usd) : calculateUSDValue(specificAmount / 100000000),
+                          risk,
+                          transactionCount: tx.input_cnt,
+                          entityType: entityType,
+                          entity_type: entityType,
+                          entity_tags: entityTags,
+                          logo: logoPath,
+                          direction: 'out' as const,
+                        });
+                        console.log(`Added outgoing transaction (fallback): ${nodeAddress} -> ${outputAddress}`);
+                      }
                     }
                 }
               });
@@ -1422,8 +1566,12 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
       const txAmount = Number.parseFloat(tx.usdValue.replace(/[$,]/g, ''))
       const matchesAmountRange = txAmount >= amountRange[0] && txAmount <= amountRange[1]
 
+      // Apply spam filter
+      const isSpam = isSpamTransaction(tx)
+      const matchesSpamFilter = !isSpam
+
       // Debug: Log why transactions are being filtered out
-      if (!matchesSearch || !matchesRisk || !matchesEntityType || !matchesDirection || !matchesDateRange || !matchesAmountRange) {
+      if (!matchesSearch || !matchesRisk || !matchesEntityType || !matchesDirection || !matchesDateRange || !matchesAmountRange || !matchesSpamFilter) {
         console.log('Transaction filtered out:', {
           txId: tx.txId,
           entityName: tx.entityName,
@@ -1432,12 +1580,14 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
           matchesEntityType,
           matchesDirection,
           matchesDateRange,
-          matchesAmountRange
+          matchesAmountRange,
+          matchesSpamFilter,
+          isSpam
         });
       }
 
       // Don't filter out processed transactions - show them but mark as processed
-      return matchesSearch && matchesRisk && matchesEntityType && matchesDirection && matchesDateRange && matchesAmountRange
+      return matchesSearch && matchesRisk && matchesEntityType && matchesDirection && matchesDateRange && matchesAmountRange && matchesSpamFilter
     })
 
     // Sort transactions
@@ -1479,7 +1629,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
     })
 
     return filtered
-  }, [allTransactions, searchQuery, filterRisk, filterEntityType, filterDirection, dateRange, amountRange, sortBy, sortOrder])
+  }, [allTransactions, searchQuery, filterRisk, filterEntityType, filterDirection, dateRange, amountRange, sortBy, sortOrder, hideSpam])
 
   // Update amount range when max amount changes significantly
   useEffect(() => {
@@ -1555,7 +1705,16 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl w-[95vw] max-h-[90vh] bg-card border-2 border-border text-foreground shadow-2xl p-0 overflow-hidden ring-4 ring-primary/40">
+      <DialogContent 
+        className="max-w-7xl w-[95vw] max-h-[90vh] bg-card border-2 border-border text-foreground shadow-2xl p-0 overflow-hidden ring-4 ring-primary/40"
+        style={isFirstNode ? {
+          position: 'fixed',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 50
+        } : undefined}
+      >
         {/* Header */}
         <DialogHeader className="border-b-2 border-primary/30 p-6 pb-4 flex-shrink-0 bg-gradient-to-r from-primary/5 to-primary/10">
           <div className="flex items-center justify-between">
@@ -1587,10 +1746,15 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 </div>
               </DialogTitle>
               <DialogDescription className="text-sm text-muted-foreground mt-1 ml-5">
-                {allTransactions.length > 0 ? allTransactions.length.toLocaleString() : (node?.availableTransactions?.toLocaleString() || '0')} available transactions
+                {allTransactions.length > 0 ? allTransactions.length.toLocaleString() : (node?.availableTransactions?.toLocaleString() || '0')} available inputs
                 {processedTransactionHashes.size > 0 && (
                   <span className="text-orange-600 ml-2">
                     ({processedTransactionHashes.size} already expanded)
+                  </span>
+                )}
+                {hideSpam && (
+                  <span className="text-blue-600 ml-2">
+                    (spam filtered)
                   </span>
                 )}
               </DialogDescription>
@@ -1850,7 +2014,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
             <div className="flex items-center space-x-4 text-sm text-muted-foreground">
               <div className="flex items-center">
                 <Filter className="h-4 w-4 mr-1" />
-                Showing {filteredTransactions.length} of {allTransactions.length}
+                Showing {filteredTransactions.length} of {allTransactions.length} inputs
                 {processedTransactionHashes.size > 0 && (
                   <span className="text-orange-600 ml-1">
                     ({processedTransactionHashes.size} processed)
@@ -1866,7 +2030,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
             </div>
           </div>
 
-          {/* Transaction List - Fixed height scrollable area */}
+          {/* Input List - Fixed height scrollable area */}
           <div className="flex-1 min-h-0 border border-border rounded-lg bg-muted overflow-hidden flex flex-col">
             {/* Table Header */}
             <div className="grid grid-cols-12 gap-4 p-4 border-b border-border bg-background text-sm font-medium text-foreground flex-shrink-0">
@@ -1935,7 +2099,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 {loading ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-                    <div className="text-lg font-medium">Loading transactions...</div>
+                    <div className="text-lg font-medium">Loading inputs...</div>
                     <div className="text-sm mb-4">{loadingProgress.step}</div>
                     {loadingProgress.total > 0 && (
                       <div className="w-full max-w-md mx-auto">
@@ -1957,20 +2121,20 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                     {processedTransactionHashes.size > 0 && allTransactions.length > 0 ? (
                       <>
                         <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <div className="text-lg font-medium">All transactions have been expanded</div>
-                        <div className="text-sm">This node has no more transactions to expand</div>
+                        <div className="text-lg font-medium">All inputs have been expanded</div>
+                        <div className="text-sm">This node has no more inputs to expand</div>
                       </>
                     ) : (
                       <>
                         <Filter className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <div className="text-lg font-medium">No transactions match your filters</div>
+                        <div className="text-lg font-medium">No inputs match your filters</div>
                         <div className="text-sm">Try adjusting your search criteria or clearing filters</div>
                       </>
                     )}
                   </div>
                 ) : (
-                  filteredTransactions.map((tx) => {
-                    const isProcessed = processedTransactionHashes.has(tx.txHash)
+                  filteredTransactions.map(tx => {
+                    const isProcessed = processedTransactionHashes.has(tx.txHash);
                     return (
                       <div
                         key={tx.id}
@@ -1983,112 +2147,105 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                         } ${isProcessed ? "opacity-75" : ""}`}
                         onClick={() => handleTransactionToggle(tx.id)}
                       >
-                      <div className="col-span-1">
-                        <Checkbox
-                          checked={selectedTransactions.has(tx.id)}
-                          onChange={() => handleTransactionToggle(tx.id)}
-                          className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <div className="flex items-center">
-                          {tx.logo ? (
-                            <img 
-                              src={tx.logo} 
-                              alt={tx.entityName} 
-                              className="w-6 h-6 rounded-full mr-2 border border-border"
-                              onError={(e) => {
-                                console.log(`Logo failed to load for ${tx.entityName}:`, tx.logo);
-                                e.currentTarget.style.display = 'none'
-                              }}
-                              onLoad={(e) => {
-                                console.log(`Logo loaded successfully for ${tx.entityName}:`, tx.logo);
-                              }}
-                            />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full mr-2 border border-border bg-muted flex items-center justify-center">
-                              <span className="text-xs font-bold text-muted-foreground">
-                                {tx.entityName.charAt(0).toUpperCase()}
-                              </span>
-                            </div>
-                          )}
-                          <div className="font-medium text-foreground text-sm">{tx.entityName}</div>
-                          {isProcessed && (
-                            <Badge variant="outline" className="ml-2 text-xs bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-600">
-                              Expanded
-                            </Badge>
-                          )}
+                        <div className="col-span-1">
+                          <Checkbox
+                            checked={selectedTransactions.has(tx.id)}
+                            onChange={() => handleTransactionToggle(tx.id)}
+                            className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                          />
                         </div>
-                        <div className="text-muted-foreground font-mono text-xs truncate ml-8">{tx.address.substring(0, 12)}...</div>
-                      </div>
-
-                      <div className="col-span-2">
-                        <div className="font-mono text-foreground text-sm truncate" title={tx.entityId}>{tx.entityId}</div>
-                      </div>
-
-                      <div className="col-span-2">
-                        <div className="font-mono text-foreground text-sm">
-                          {tx.amount} {tx.currency}
+                        <div className="col-span-2">
+                          <div className="flex items-center">
+                            {tx.logo ? (
+                              <img 
+                                src={tx.logo} 
+                                alt={tx.entityName} 
+                                className="w-6 h-6 rounded-full mr-2 border border-border"
+                                onError={(e) => {
+                                  console.log(`Logo failed to load for ${tx.entityName}:`, tx.logo);
+                                  e.currentTarget.style.display = 'none'
+                                }}
+                                onLoad={(e) => {
+                                  console.log(`Logo loaded successfully for ${tx.entityName}:`, tx.logo);
+                                }}
+                              />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full mr-2 border border-border bg-muted flex items-center justify-center">
+                                <span className="text-xs font-bold text-muted-foreground">
+                                  {tx.entityName.charAt(0).toUpperCase()}
+                                </span>
+                              </div>
+                            )}
+                            <div className="font-medium text-foreground text-sm">{tx.entityName}</div>
+                            {isProcessed && (
+                              <Badge variant="outline" className="ml-2 text-xs bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-600">
+                                Expanded
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-muted-foreground font-mono text-xs truncate ml-8">{tx.address.slice(0, 12)}...</div>
                         </div>
-                        <div className="text-green-600 font-medium text-sm">{tx.usdValue}</div>
-                      </div>
-
-                      <div className="col-span-1">
-                        <div className="text-foreground text-sm">{tx.date}</div>
-                        <div className="text-muted-foreground text-xs">{tx.transactionCount} txns</div>
-                      </div>
-
-                      <div className="col-span-1">
-                        <Badge
-                          variant={tx.risk === "high" ? "destructive" : "outline"}
-                          className={`text-xs font-bold ${
-                            tx.risk === "high" 
-                              ? "bg-red-600 dark:bg-red-500 text-white border-red-600 dark:border-red-500 shadow-sm animate-pulse" 
-                              : getRiskColor(tx.risk)
-                          }`}
-                        >
-                          {tx.risk === "high" ? "⚠ HIGH" : tx.risk}
-                        </Badge>
-                      </div>
-
-                      <div className="col-span-1">
-                        <Badge className={`text-xs border ${getEntityTypeColor(tx.entity_type || tx.entityType)}`}>
-                          {tx.entity_type || tx.entityType}
-                        </Badge>
-                      </div>
-
-                      <div className="col-span-1">
-                        <Badge 
-                          variant={tx.direction === "in" ? "default" : "secondary"}
-                          className={`text-xs ${
-                            tx.direction === "in" 
-                              ? "bg-green-500/20 text-green-600 border-green-500/30" 
-                              : "bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30"
-                          }`}
-                        >
-                          {tx.direction === "in" ? "In" : "Out"}
-                        </Badge>
-                      </div>
-
-                      <div className="col-span-1">
-                        <div
-                          className="font-mono text-blue-600 text-xs cursor-pointer hover:text-blue-500 truncate"
-                          title={tx.txId}
-                        >
-                          {tx.txId.substring(0, 12)}...
+                        <div className="col-span-2">
+                          <div className="font-mono text-foreground text-sm truncate" title={tx.entityId}>{tx.entityId}</div>
+                        </div>
+                        <div className="col-span-2">
+                          <div className="font-mono text-foreground text-sm">
+                            {tx.amount} {tx.currency}
+                          </div>
+                          <div className="text-green-600 font-medium text-sm">{tx.usdValue}</div>
+                        </div>
+                        <div className="col-span-1">
+                                                  <div className="text-foreground text-sm">{tx.date}</div>
+                        <div className="text-muted-foreground text-xs">{tx.transactionCount} inputs</div>
+                        </div>
+                        <div className="col-span-1">
+                          <Badge
+                            variant={tx.risk === "high" ? "destructive" : "outline"}
+                            className={`text-xs font-bold ${
+                              tx.risk === "high" 
+                                ? "bg-red-600 dark:bg-red-500 text-white border-red-600 dark:border-red-500 shadow-sm animate-pulse" 
+                                : getRiskColor(tx.risk)
+                            }`}
+                          >
+                            {tx.risk === "high" ? "⚠ HIGH" : tx.risk}
+                          </Badge>
+                        </div>
+                        <div className="col-span-1">
+                          <Badge className={`text-xs border ${getEntityTypeColor(tx.entity_type || tx.entityType)}`}>
+                            {tx.entity_type || tx.entityType}
+                          </Badge>
+                        </div>
+                        <div className="col-span-1">
+                          <Badge 
+                            variant={tx.direction === "in" ? "default" : "secondary"}
+                            className={`text-xs ${
+                              tx.direction === "in" 
+                                ? "bg-green-500/20 text-green-600 border-green-500/30" 
+                                : "bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30"
+                            }`}
+                          >
+                            {tx.direction === "in" ? "In" : "Out"}
+                          </Badge>
+                        </div>
+                        <div className="col-span-1">
+                          <div
+                            className="font-mono text-blue-600 text-xs cursor-pointer hover:text-blue-500 truncate"
+                            title={tx.txId}
+                          >
+                            {tx.txId.slice(0, 12)}...
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })
-                )}
-              </div>
+                    );
+                  })
+                )
+              }
             </div>
           </div>
+        </div>
 
-          {/* Action Buttons */}
-          <div className="flex-shrink-0 flex justify-between items-center pt-4 border-t-2 border-primary/40 bg-gradient-to-r from-primary/5 to-primary/10">
+        {/* Action Buttons */}
+        <div className="flex-shrink-0 flex justify-between items-center pt-4 border-t-2 border-primary/40 bg-gradient-to-r from-primary/5 to-primary/10">
             <div className="flex items-center space-x-2">
               <Button
                 variant="outline"

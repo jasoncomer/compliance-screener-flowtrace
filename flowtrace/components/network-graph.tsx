@@ -102,6 +102,7 @@ interface NetworkGraphProps {
   connections: Connection[]
   setConnections: (connections: Connection[] | ((prev: Connection[]) => Connection[])) => void
   hidePassThrough?: boolean
+  hideSpam?: boolean
   zoom?: number
   setZoom?: (zoom: number) => void
   pan?: { x: number; y: number }
@@ -119,6 +120,7 @@ export function NetworkGraph({
   connections,
   setConnections,
   hidePassThrough = false,
+  hideSpam = false,
   zoom = 1,
   setZoom,
   pan = { x: 0, y: 0 },
@@ -624,13 +626,33 @@ export function NetworkGraph({
     console.log('✅ Node deletion completed successfully')
   }, [setNodes, setConnections, nodes, connections])
 
+
+
   // Handle node expansion
   const expandNode = useCallback((nodeId: string, selectedTransactions: any[]) => {
     // Use the dedicated expansion target ID to ensure we always branch from the original parent
     const targetNodeId = expansionTargetId || nodeId
-    console.log('Expanding node:', targetNodeId, 'with', selectedTransactions.length, 'transactions')
+    console.log('🔄 Expanding node:', targetNodeId, 'with', selectedTransactions.length, 'transactions')
     console.log('Original nodeId:', nodeId, 'expansionTargetId:', expansionTargetId)
-    console.log('Selected transactions:', selectedTransactions.map(tx => ({ txHash: tx.txHash, entityName: tx.entityName })))
+    console.log('Selected transactions:', selectedTransactions.map(tx => ({ 
+      txHash: tx.txHash, 
+      entityName: tx.entityName, 
+      direction: tx.direction,
+      address: tx.address 
+    })))
+    
+    // Create a set of selected transaction hashes for easy lookup
+    const selectedTxHashes = new Set(selectedTransactions.map(tx => tx.txHash))
+    
+    // Debug: Log current state before expansion
+    console.log('📊 Current state before expansion:')
+    console.log('- Total nodes:', nodesRef.current.length)
+    console.log('- Total connections:', connectionsRef.current.length)
+    console.log('- Connections involving target node:', connectionsRef.current.filter(conn => 
+      conn.from === targetNodeId || conn.to === targetNodeId
+    ).length)
+    console.log('- All connections:', connectionsRef.current.map(conn => ({ from: conn.from, to: conn.to, txHash: conn.txHash })))
+    console.log('- Selected transaction hashes:', Array.from(selectedTxHashes))
     
     const node = nodesRef.current.find((n) => n.id === targetNodeId)
     if (!node) {
@@ -645,29 +667,46 @@ export function NetworkGraph({
     // Count existing children of the target node to determine starting childIndex
     const existingChildren = nodesRef.current.filter(n => n.id.startsWith(`${targetNodeId}_child_`))
     
-    // Get existing connections for this node
-    const existingConnections = connectionsRef.current.filter((conn) => 
+    // Get existing connections for this node (only for determining what to remove)
+    const existingConnectionsForTarget = connectionsRef.current.filter((conn) => 
       conn.from === targetNodeId || conn.to === targetNodeId
     )
-    
-    // Create a set of selected transaction hashes for easy lookup
-    const selectedTxHashes = new Set(selectedTransactions.map(tx => tx.txHash))
     
     // Remove nodes and connections for deselected transactions
     const nodesToRemove = new Set<string>()
     const connectionsToRemove = new Set<string>()
     
-    existingConnections.forEach(conn => {
-      if (conn.txHash && !selectedTxHashes.has(conn.txHash)) {
-        // This connection was deselected, mark it for removal
+    // Only remove connections and nodes that are specifically related to this expansion
+    existingConnectionsForTarget.forEach(conn => {
+      console.log(`Checking connection: ${conn.from} -> ${conn.to} (txHash: ${conn.txHash})`)
+      console.log(`- Is this connection's txHash in selectedTxHashes? ${selectedTxHashes.has(conn.txHash)}`)
+      console.log(`- Connection txHash: ${conn.txHash}`)
+      console.log(`- Selected txHashes: ${Array.from(selectedTxHashes)}`)
+      
+      // Only remove connections that were created by this node's previous expansions
+      // Check if either end of the connection is a child of this target node
+      const isFromChild = conn.from.startsWith(`${targetNodeId}_child_`)
+      const isToChild = conn.to.startsWith(`${targetNodeId}_child_`)
+      const isTargetInvolved = conn.from === targetNodeId || conn.to === targetNodeId
+      
+      console.log(`- Is from a child of target? ${isFromChild}`)
+      console.log(`- Is to a child of target? ${isToChild}`)
+      console.log(`- Is target involved? ${isTargetInvolved}`)
+      
+      // Only remove if this connection involves a child node of the target AND the txHash is not selected
+      if ((isFromChild || isToChild) && conn.txHash && !selectedTxHashes.has(conn.txHash)) {
+        // This connection was created by a previous expansion of this node and is now deselected
+        console.log(`Marking connection for removal: ${conn.from} -> ${conn.to} (txHash: ${conn.txHash})`)
         connectionsToRemove.add(`${conn.from}-${conn.to}-${conn.txHash}`)
         
-        // If the connection goes to a child node, mark that node for removal too
-        if (conn.to.startsWith(`${targetNodeId}_child_`)) {
+        // Mark the child node for removal too
+        if (isToChild) {
           nodesToRemove.add(conn.to)
-        } else if (conn.from.startsWith(`${targetNodeId}_child_`)) {
+        } else if (isFromChild) {
           nodesToRemove.add(conn.from)
         }
+      } else {
+        console.log(`Preserving connection: ${conn.from} -> ${conn.to} (txHash: ${conn.txHash})`)
       }
     })
     
@@ -813,6 +852,13 @@ export function NetworkGraph({
     console.log('✅ Expansion complete:', newNodes.length, 'new nodes,', newConnections.length, 'new connections')
     console.log('New connections details:', newConnections.map(conn => ({ from: conn.from, to: conn.to, txHash: conn.txHash })))
     
+    // Debug: Log final state after expansion
+    console.log('📊 Final state after expansion:')
+    console.log('- Total nodes after update:', nodesRef.current.length + newNodes.length)
+    console.log('- Total connections after update:', connectionsRef.current.length + newConnections.length)
+    console.log('- Connections to be removed:', connectionsToRemove.size)
+    console.log('- Nodes to be removed:', nodesToRemove.size)
+    
     setNodesRef.current((prev) => {
       // Remove nodes that were deselected
       const filteredNodes = prev.filter(node => !nodesToRemove.has(node.id))
@@ -837,13 +883,24 @@ export function NetworkGraph({
     })
     
     setConnectionsRef.current((prev) => {
-      // Remove connections that were deselected
-      const filteredConnections = prev.filter(conn => 
-        !connectionsToRemove.has(`${conn.from}-${conn.to}-${conn.txHash}`)
-      )
+      console.log('🔄 Updating connections:')
+      console.log('- Previous connections count:', prev.length)
+      console.log('- Connections to remove:', Array.from(connectionsToRemove))
+      console.log('- All existing connections before filtering:', prev.map(conn => `${conn.from} -> ${conn.to} (${conn.txHash})`))
+      
+      // Remove only the connections that were specifically deselected for this expansion
+      const filteredConnections = prev.filter(conn => {
+        const shouldRemove = connectionsToRemove.has(`${conn.from}-${conn.to}-${conn.txHash}`)
+        if (shouldRemove) {
+          console.log(`Removing connection: ${conn.from} -> ${conn.to} (txHash: ${conn.txHash})`)
+        } else {
+          console.log(`Preserving connection: ${conn.from} -> ${conn.to} (txHash: ${conn.txHash})`)
+        }
+        return !shouldRemove
+      })
       
       if (connectionsToRemove.size > 0) {
-        console.log('Removed', connectionsToRemove.size, 'deselected connections')
+        console.log('Removed', connectionsToRemove.size, 'deselected connections for node', targetNodeId)
       }
       
       // Filter out duplicate connections based on transaction hash
@@ -855,10 +912,11 @@ export function NetworkGraph({
         console.log('Duplicate txHashes:', newConnections.filter(conn => existingTxHashes.has(conn.txHash)).map(conn => conn.txHash))
       }
       
-      console.log('Final connection update:', {
+      console.log('Final connection update for node', targetNodeId, ':', {
         existingConnections: filteredConnections.length,
         newConnections: uniqueNewConnections.length,
-        totalConnections: filteredConnections.length + uniqueNewConnections.length
+        totalConnections: filteredConnections.length + uniqueNewConnections.length,
+        preservedConnections: prev.length - connectionsToRemove.size
       })
       
       return [...filteredConnections, ...uniqueNewConnections]
@@ -1515,7 +1573,7 @@ export function NetworkGraph({
         const deleteButtonY = clickedNode.y - buttonOffset
         const distanceToDeleteButton = Math.sqrt((x - deleteButtonX) ** 2 + (y - deleteButtonY) ** 2)
         
-        if (distanceToDeleteButton <= 8 && clickedNode.type !== "passthrough" && clickedNode.type !== "bridge") {
+        if (distanceToDeleteButton <= 8 && clickedNode.type !== "bridge") {
           console.log('🎯 Delete button clicked for node:', clickedNode.id)
           setDeleteConfirmDialog({
             open: true,
@@ -2480,6 +2538,8 @@ export function NetworkGraph({
           nodeId={expansionDialog.nodeId}
           node={nodes.find((n) => n.id === expansionDialog.nodeId)}
           existingConnections={connections}
+          hideSpam={hideSpam}
+          isFirstNode={nodes.length === 1} // Only first node gets custom positioning
           onExpand={(nodeId, selectedTransactions) => {
             console.log('NodeExpansionDialog onExpand called with:', { nodeId, expansionTargetId, selectedTransactionsCount: selectedTransactions.length })
             expandNode(nodeId, selectedTransactions)
@@ -2522,6 +2582,8 @@ export function NetworkGraph({
           }}
         />
       )}
+
+
 
       {/* Connection Edit Dialog */}
       <ConnectionEditDialog
@@ -2579,7 +2641,7 @@ export function NetworkGraph({
 
 
       {/* Native clickable buttons for all nodes */}
-      {nodes.map((node, index) => {
+      {filteredNodesAndConnections.nodes.map((node, index) => {
         const nodeRadius = node.isPassThrough ? 15 : 30
         const buttonOffset = nodeRadius + 5
         const buttonX = (node.x * zoom + pan.x)
@@ -2592,8 +2654,8 @@ export function NetworkGraph({
         
         return (
           <div key={`buttons-${node.id}-${index}`}>
-            {/* Delete button - show for all nodes except pass-through and bridge */}
-            {node.type !== "passthrough" && node.type !== "bridge" && !isAnyModalOpen() && (
+            {/* Delete button - show for all nodes except bridge */}
+            {node.type !== "bridge" && !isAnyModalOpen() && (
               <div
                 className="absolute w-4 h-4 bg-red-500 hover:bg-red-600 rounded-full cursor-pointer border-2 border-white shadow-lg z-10 flex items-center justify-center"
                 style={{
@@ -2619,8 +2681,8 @@ export function NetworkGraph({
             
             {/* Expand button - show for nodes with available transactions */}
             {(() => {
-              // Always show expand button for testing, or when there are available transactions
-              const shouldShow = !isAnyModalOpen() && (node.availableTransactions && node.availableTransactions > 0 || true);
+              // Only show expand button when there are available transactions to expand
+              const shouldShow = !isAnyModalOpen() && node.availableTransactions && node.availableTransactions > 0;
               if (!shouldShow) {
                 console.log('Expand button not showing for node:', node.id, {
                   availableTransactions: node.availableTransactions,

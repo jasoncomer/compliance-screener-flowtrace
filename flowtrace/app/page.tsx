@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Search, ChevronLeft, ChevronRight, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw, HelpCircle, Trash2, X, Edit3, FolderOpen, Plus, Save, BarChart3, Network, Folder, AlertTriangle } from "lucide-react"
+import { Search, ChevronLeft, ChevronRight, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw, HelpCircle, Trash2, X, Edit3, FolderOpen, Plus, Save, BarChart3, Network, Folder, AlertTriangle, Filter } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
@@ -87,12 +87,28 @@ export default function FlowTraceApp() {
   const [activeDrawingTool, setActiveDrawingTool] = useState("select")
   const [activeColor, setActiveColor] = useState("#f59e0b")
   const [hidePassThrough, setHidePassThrough] = useState(false)
+  const [hideSpam, setHideSpam] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [showDebugPanel, setShowDebugPanel] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [customNodeDialog, setCustomNodeDialog] = useState<{ open: boolean; position: { x: number; y: number } }>({ open: false, position: { x: 0, y: 0 } })
   const [connectionDialog, setConnectionDialog] = useState<{ open: boolean; sourceNodeId: string }>({ open: false, sourceNodeId: '' })
+
+  // Filter out spam transactions (under $1 after 2015-01-01)
+  const isSpamTransaction = (connection: any) => {
+    if (!hideSpam) return false;
+    
+    // Check if transaction is after 2015-01-01
+    const transactionDate = new Date(connection.date);
+    const spamCutoffDate = new Date('2015-01-01');
+    
+    if (transactionDate < spamCutoffDate) return false;
+    
+    // Check if USD value is under $1
+    const usdValue = parseFloat(connection.usdValue?.replace(/[$,]/g, '') || '0');
+    return usdValue < 1;
+  };
 
   // Get existing connections for a node
   const getExistingConnections = (nodeId: string) => {
@@ -122,6 +138,8 @@ export default function FlowTraceApp() {
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false)
   const [refreshWorkspaceManager, setRefreshWorkspaceManager] = useState(0)
   const [newInvestigationModalOpen, setNewInvestigationModalOpen] = useState(false)
+  const [addressSearchModalOpen, setAddressSearchModalOpen] = useState(false)
+  const [pendingAddressSearch, setPendingAddressSearch] = useState<string>("")
 
   // const [saveDialogOpen, setSaveDialogOpen] = useState(false) // Removed - no longer needed
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | undefined>(undefined)
@@ -132,8 +150,8 @@ export default function FlowTraceApp() {
   const [nodes, setNodes] = useState<any[]>([
     {
       id: "center",
-      x: 400,
-      y: 300,
+      x: 1100,
+      y: 700,
       label: "Test Entity Alpha",
       originalLabel: "Test Entity Alpha",
       address: "39PRJa1EbEsLAJdu2f526PAD6T9RhMVGw9",
@@ -554,14 +572,15 @@ export default function FlowTraceApp() {
             ? {
                 ...node,
                 label: realNodeData.entityName,
-                type: realNodeData.entityType,
+                type: realNodeData.isPassThrough ? "passthrough" : realNodeData.entityType,
                 risk: realNodeData.riskLevel,
                 balance: realNodeData.balance,
                 transactions: finalTransactions,
                 logo: realNodeData.logo,
                 availableTransactions: finalAvailableTransactions,
                 entity_type: realNodeData.entityTypeFromSOT,
-                entity_tags: realNodeData.entityTags
+                entity_tags: realNodeData.entityTags,
+                isPassThrough: realNodeData.isPassThrough
               }
             : node
         ))
@@ -1039,7 +1058,7 @@ export default function FlowTraceApp() {
           console.error('Attribution data API failed for', address, ':', error);
           return null;
         }),
-        fetchRiskScoringData(address, 'address').catch((error) => {
+        fetchRiskScoringData(address).catch((error) => {
           console.error('Risk scoring API failed for', address, ':', error);
           return null;
         }),
@@ -1060,24 +1079,31 @@ export default function FlowTraceApp() {
       if (attributionData?.data && attributionData.data.length > 0) {
         const entity = attributionData.data[0].entity;
         if (entity) {
-          entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
-          
-          // Try to fetch SOT data for this entity to get proper entity_type
+          // Try to fetch SOT data for this entity to get proper name and entity_type
           try {
             const sotData = await fetchSOTData();
             if (sotData && Array.isArray(sotData)) {
               const sotEntry = sotData.find(entry => entry.entity_id === entity);
               if (sotEntry) {
+                // Use proper_name from SOT data if available, otherwise fall back to entity name
+                entityName = sotEntry.proper_name || entity.charAt(0).toUpperCase() + entity.slice(1);
                 entityTypeFromSOT = sotEntry.entity_type;
                 entityTags = sotEntry.entity_tags || [];
                 console.log('Found SOT data for entity:', entity, {
+                  proper_name: sotEntry.proper_name,
                   entity_type: entityTypeFromSOT,
                   entity_tags: entityTags
                 });
+              } else {
+                // Fall back to entity name if no SOT data found
+                entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
+                console.log('No SOT data found for entity:', entity, 'using fallback name');
               }
             }
           } catch (error) {
             console.log('Could not fetch SOT data for entity:', entity, error);
+            // Fall back to entity name if SOT fetch fails
+            entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
           }
           
           // Determine entity type based on entity name or other logic (fallback)
@@ -1124,7 +1150,8 @@ export default function FlowTraceApp() {
         console.log('No address data received for', address, ', using defaults');
       }
       
-      // Use transaction data to get accurate transaction count if available
+      // Use transaction data to get accurate transaction count and detect pass-through nodes
+      let isPassThrough = false;
       if (transactionData?.txs && Array.isArray(transactionData.txs)) {
         const actualTransactionCount = transactionData.txs.length;
         console.log('✅ FIXED: Actual transaction count from transaction data for', address, ':', actualTransactionCount);
@@ -1136,6 +1163,83 @@ export default function FlowTraceApp() {
         });
         if (actualTransactionCount > 0) {
           transactions = actualTransactionCount;
+          
+          // Detect pass-through nodes based on transaction patterns
+          // A true pass-through node should have exactly 2 transactions: 1 incoming and 1 outgoing
+          if (actualTransactionCount === 2) {
+            let totalIncoming = 0;
+            let totalOutgoing = 0;
+            let incomingTx: any = null;
+            let outgoingTx: any = null;
+            
+            transactionData.txs.forEach((tx: any) => {
+              // Check if this address is in inputs (outgoing)
+              const isInInputs = tx.inputs?.some((input: any) => input.addr === address);
+              // Check if this address is in outputs (incoming)
+              const isInOutputs = tx.outputs?.some((output: any) => output.addr === address);
+              
+              if (isInInputs && !isInOutputs) {
+                // This is an outgoing transaction
+                const outgoingAmount = tx.inputs
+                  .filter((input: any) => input.addr === address)
+                  .reduce((sum: number, input: any) => sum + (input.amt || 0), 0);
+                totalOutgoing += outgoingAmount;
+                outgoingTx = tx;
+              } else if (isInOutputs && !isInInputs) {
+                // This is an incoming transaction
+                const incomingAmount = tx.outputs
+                  .filter((output: any) => output.addr === address)
+                  .reduce((sum: number, output: any) => sum + (output.amt || 0), 0);
+                totalIncoming += incomingAmount;
+                incomingTx = tx;
+              }
+            });
+            
+            // Consider it a pass-through if:
+            // 1. Amount difference is less than 5% (accounting for fees)
+            // 2. Exactly 2 transactions (1 incoming, 1 outgoing)
+            // 3. Both transactions exist
+            if (totalIncoming > 0 && totalOutgoing > 0 && incomingTx && outgoingTx) {
+              const difference = Math.abs(totalIncoming - totalOutgoing);
+              const threshold = totalIncoming * 0.05;
+              const amountCondition = difference <= threshold;
+              
+              // Count distinct counterparties to ensure it's a simple pass-through
+              const counterparties = new Set();
+              
+              // Add counterparties from incoming transaction
+              incomingTx.inputs?.forEach((input: any) => {
+                if (input.addr !== address) {
+                  counterparties.add(input.addr);
+                }
+              });
+              
+              // Add counterparties from outgoing transaction
+              outgoingTx.outputs?.forEach((output: any) => {
+                if (output.addr !== address) {
+                  counterparties.add(output.addr);
+                }
+              });
+              
+              // Only consider pass-through if there are exactly 2 counterparties
+              // (one for incoming, one for outgoing - same entity)
+              const hasExactlyTwoCounterparties = counterparties.size === 2;
+              
+              isPassThrough = amountCondition && hasExactlyTwoCounterparties;
+              
+              console.log('Pass-through detection for', address, ':', {
+                totalIncoming: totalIncoming / 100000000, // Convert to BTC
+                totalOutgoing: totalOutgoing / 100000000, // Convert to BTC
+                difference: difference / 100000000,
+                threshold: threshold / 100000000,
+                amountCondition,
+                counterpartyCount: counterparties.size,
+                counterparties: Array.from(counterparties),
+                hasExactlyTwoCounterparties,
+                isPassThrough
+              });
+            }
+          }
         }
       } else if (transactionData?.data && Array.isArray(transactionData.data)) {
         // Fallback to data structure if txs doesn't exist
@@ -1156,6 +1260,13 @@ export default function FlowTraceApp() {
         });
       }
 
+      // Update entity name for pass-through nodes if no entity data is available
+      if (isPassThrough && entityName === "Unknown Entity") {
+        entityName = "Pass-Through Node";
+        entityType = "passthrough";
+        console.log('Updated entity name for pass-through node:', address, 'to:', entityName);
+      }
+
       return {
         entityName,
         entityType,
@@ -1164,7 +1275,8 @@ export default function FlowTraceApp() {
         balance,
         transactions,
         entityTypeFromSOT,
-        entityTags
+        entityTags,
+        isPassThrough
       };
     } catch (error) {
       console.error('Error fetching node data:', error);
@@ -1186,14 +1298,33 @@ export default function FlowTraceApp() {
     console.log('Current workspace ID:', currentWorkspaceId)
     console.log('Current version ID:', currentVersionId)
     
+    // Check if there are unsaved changes in the current workspace
+    const hasUnsavedChanges = autoSaveManager.hasUnsavedWork()
+    const hasNodes = nodes.length > 0
+    
+    // If there are unsaved changes and nodes, prompt user to save current workspace
+    if (hasUnsavedChanges && hasNodes) {
+      // Store the address to search for after user makes their choice
+      setPendingAddressSearch(address)
+      setAddressSearchModalOpen(true)
+      return
+    }
+    
+    // Proceed with address search
+    await performAddressSearch(address)
+  }
+
+  const performAddressSearch = async (address: string) => {
+    console.log('Performing address search for:', address)
+    
     // Fetch real data for the address
     const nodeData = await fetchNodeData(address);
     
     // Create a new node for the searched address with real data
     const newNode = {
       id: `searched_${address}`,
-      x: 1000, // Move much further right to avoid side panel
-      y: 400, // Center vertically
+      x: 1500, // Move much further right to avoid side panel
+      y: 1000, // Center vertically
       label: nodeData.entityName,
       originalLabel: nodeData.entityName,
       address: address,
@@ -1245,7 +1376,7 @@ export default function FlowTraceApp() {
         setSelectedAddress(address)
         setSelectedNode(newNode)
         setZoom(1)
-        setPan({ x: -600, y: -200 })
+        setPan({ x: -1200, y: -700 })
         setHidePassThrough(false)
         setSearchQuery("")
         setCurrentVersionId(newVersion.id)
@@ -1275,7 +1406,7 @@ export default function FlowTraceApp() {
       setSelectedAddress(address)
       setSelectedNode(newNode)
       setZoom(1)
-      setPan({ x: -600, y: -200 })
+      setPan({ x: -1200, y: -700 })
       setSearchQuery("")
     } else {
       // Start completely new investigation
@@ -1285,7 +1416,7 @@ export default function FlowTraceApp() {
       setSelectedAddress(address)
       setSelectedNode(newNode)
       setZoom(1)
-      setPan({ x: -600, y: -200 })
+      setPan({ x: -1200, y: -700 })
       setHidePassThrough(false)
       setSearchQuery("")
       setCurrentWorkspaceId(undefined)
@@ -1324,7 +1455,7 @@ export default function FlowTraceApp() {
       selectedAddress: address,
       selectedNode: newNode,
       zoom: 1,
-      pan: { x: -600, y: -200 },
+      pan: { x: -1200, y: -700 },
       hidePassThrough: false
     }
     
@@ -1351,7 +1482,7 @@ export default function FlowTraceApp() {
       setSelectedAddress(address)
       setSelectedNode(newNode)
       setZoom(1)
-      setPan({ x: -600, y: -200 })
+      setPan({ x: -1200, y: -700 })
       setHidePassThrough(false)
       setSearchQuery("")
       
@@ -1546,9 +1677,10 @@ export default function FlowTraceApp() {
                   }
                 }
               }}
-              connections={connections}
+              connections={connections.filter(conn => !isSpamTransaction(conn))}
               setConnections={setConnections}
               hidePassThrough={hidePassThrough}
+              hideSpam={hideSpam}
               zoom={zoom}
               setZoom={setZoom}
               pan={pan}
@@ -1596,7 +1728,8 @@ export default function FlowTraceApp() {
                   selectedNode,
                   zoom,
                   pan,
-                  hidePassThrough
+                  hidePassThrough,
+                  hideSpam
                 }}
                 onSaveWorkspace={() => {}} // No longer needed - both buttons use handleQuickSave
                 currentWorkspaceId={currentWorkspaceId}
@@ -1714,7 +1847,7 @@ export default function FlowTraceApp() {
                     <EntityPanel 
                       address={selectedAddress} 
                       selectedNode={selectedNode} 
-                      connections={connections}
+                      connections={connections.filter(conn => !isSpamTransaction(conn))}
                       onConnectNode={(nodeId) => setConnectionDialog({ open: true, sourceNodeId: nodeId })}
                       availableNodes={nodes}
                       onAddNote={handleAddNote}
@@ -1775,6 +1908,15 @@ export default function FlowTraceApp() {
             >
               {hidePassThrough ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setHideSpam(!hideSpam)}
+              className={hideSpam ? "text-primary" : ""}
+              title="Hide/Show Spam Transactions (under $1 after 2015-01-01)"
+            >
+              <Filter className="h-4 w-4" />
+            </Button>
           </div>
           
           {/* Current Project Name Pill */}
@@ -1812,6 +1954,7 @@ export default function FlowTraceApp() {
             <div>• Green triangles indicate pass-through nodes</div>
             <div>• Multiple curved lines show multiple transactions</div>
             <div>• Eye icon toggles pass-through wallet visibility</div>
+            <div>• Filter icon toggles spam transactions (under $1 after 2015)</div>
             <div>• Arrows show direction of fund flow</div>
           </div>
         </div>
@@ -2029,6 +2172,138 @@ export default function FlowTraceApp() {
             <Button 
               variant="ghost" 
               onClick={() => setNewInvestigationModalOpen(false)}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Address Search Modal */}
+      <Dialog open={addressSearchModalOpen} onOpenChange={setAddressSearchModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Search className="h-5 w-5" />
+              Save Current Workspace
+            </DialogTitle>
+            <DialogDescription>
+              You have unsaved changes in your current workspace. Would you like to save your current work before searching for the address "{pendingAddressSearch}"?
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-3">
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={async () => {
+                  // Save current work and add to current workspace
+                  try {
+                    if (currentWorkspaceId) {
+                      await handleQuickSave(currentWorkspaceId, {
+                        nodes,
+                        connections,
+                        selectedAddress,
+                        selectedNode,
+                        zoom,
+                        pan,
+                        hidePassThrough
+                      })
+                      autoSaveManager.clearAutoSavedState()
+                    }
+                    setAddressSearchModalOpen(false)
+                    // Proceed with address search
+                    await performAddressSearch(pendingAddressSearch)
+                  } catch (error) {
+                    console.error('Error saving before address search:', error)
+                    alert('Error saving current work. Please try again.')
+                  }
+                }}
+              >
+                <Save className="h-4 w-4 mr-2" />
+                Save & Add to Current Workspace
+              </Button>
+              
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={async () => {
+                  // Save current work and start new workspace
+                  try {
+                    if (currentWorkspaceId) {
+                      await handleQuickSave(currentWorkspaceId, {
+                        nodes,
+                        connections,
+                        selectedAddress,
+                        selectedNode,
+                        zoom,
+                        pan,
+                        hidePassThrough
+                      })
+                      autoSaveManager.clearAutoSavedState()
+                    }
+                    setAddressSearchModalOpen(false)
+                    // Clear current workspace and start new investigation
+                    setCurrentWorkspaceId(undefined)
+                    setCurrentVersionId(undefined)
+                    // Proceed with address search
+                    await performAddressSearch(pendingAddressSearch)
+                  } catch (error) {
+                    console.error('Error saving before address search:', error)
+                    alert('Error saving current work. Please try again.')
+                  }
+                }}
+              >
+                <FolderOpen className="h-4 w-4 mr-2" />
+                Save & Start New Workspace
+              </Button>
+              
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={() => {
+                  // Continue without saving - add to current workspace
+                  setAddressSearchModalOpen(false)
+                  // Proceed with address search
+                  performAddressSearch(pendingAddressSearch)
+                }}
+              >
+                <Search className="h-4 w-4 mr-2" />
+                Continue Without Saving
+              </Button>
+              
+              <Button 
+                className="w-full justify-start" 
+                variant="destructive"
+                onClick={() => {
+                  // Discard changes and start fresh
+                  setNodes([])
+                  setConnections([])
+                  setSelectedAddress("")
+                  setSelectedNode(null)
+                  setZoom(1)
+                  setPan({ x: 0, y: 0 })
+                  setHidePassThrough(false)
+                  setSearchQuery("")
+                  setCurrentWorkspaceId(undefined)
+                  setCurrentVersionId(undefined)
+                  autoSaveManager.clearAutoSavedState()
+                  setAddressSearchModalOpen(false)
+                  // Proceed with address search
+                  performAddressSearch(pendingAddressSearch)
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Discard Changes & Start Fresh
+              </Button>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="ghost" 
+              onClick={() => setAddressSearchModalOpen(false)}
             >
               Cancel
             </Button>
