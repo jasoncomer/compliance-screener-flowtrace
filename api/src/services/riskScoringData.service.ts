@@ -26,70 +26,48 @@ class RiskScoringDataService {
     lastUpdated: new Date(0)
   };
 
-  private spreadsheetService: GoogleSheetsService;
   private readonly CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
   constructor() {
-    this.spreadsheetService = new GoogleSheetsService(googleSheetsConfig.sot.spreadsheetId);
+    // No Google Sheets service initialization
   }
 
-  private async loadDataFromSheet() {
+  private async loadDataFromMongoDB() {
     try {
-      // Load data from all relevant sheets
-      const dropdownRows = await this.spreadsheetService.getRows(countryRiskSheetName);
-      const entityTypeRows = await this.spreadsheetService.getRows(entityTypeSheetName);
+      const { fetchAllEntityTypeMasterlist } = await import('./entityTypeMasterlist.service');
+      const entityTypes = await fetchAllEntityTypeMasterlist();
 
       // Clear existing cache
       this.cache.entityTypeRiskScores.clear();
       this.cache.entityTypeRecoveryProbabilities.clear();
+      this.cache.entityTypeLogos.clear();
       this.cache.countryRiskScores.clear();
       this.cache.fatfStatus.clear();
 
-      // Process jurisdiction_master_list data
-      for (const row of dropdownRows) {
-        // Process country risk scores and FATF status
-        const country = row.get('country_of_operations');
-        const riskScore = 100 - parseFloat(row.get('country_risk_score'));
-        const fatfBlack = row.get('fatf_black') === 'TRUE';
-        const fatfGray = row.get('fatf_gray') === 'TRUE';
-        const fatfAml = row.get('fatf_aml');
-
-        if (country) {
-          if (!isNaN(riskScore)) {
-            this.cache.countryRiskScores.set(country, riskScore);
+      // Process entity type data from MongoDB
+      for (const entity of entityTypes) {
+        const entityType = entity.entity_type;
+        if (entityType) {
+          if (entity.risk_score_type !== undefined) {
+            this.cache.entityTypeRiskScores.set(entityType, entity.risk_score_type);
           }
-          this.cache.fatfStatus.set(country, {
-            black: fatfBlack,
-            gray: fatfGray,
-          });
+          if (entity.recovery_chance) {
+            this.cache.entityTypeRecoveryProbabilities.set(entityType, entity.recovery_chance);
+          }
+          if (entity.entity_type_default_logo) {
+            this.cache.entityTypeLogos.set(entityType, entity.entity_type_default_logo);
+          }
         }
       }
 
-      // Process entity_type_master_list data
-      for (const row of entityTypeRows) {
-        let entityType = row.get('entity_type') || '';
-        if (!entityType) continue;
-        entityType = entityType.trim();
-
-        const entityTypeRiskScore = parseFloat(row.get('risk_score_type'));
-        if (entityType && !isNaN(entityTypeRiskScore)) {
-          this.cache.entityTypeRiskScores.set(entityType, entityTypeRiskScore);
-        }
-        const entityTypeLogo = row.get('entity_type_default_logo');
-        if (entityTypeLogo) {
-          this.cache.entityTypeLogos.set(entityType, entityTypeLogo);
-        }
-
-        const recoveryProb = row.get('recovery_chance');
-        if (entityType && recoveryProb) {
-          this.cache.entityTypeRecoveryProbabilities.set(entityType, recoveryProb);
-        }
-      }
+      // Placeholder for country risk data - could be loaded from another MongoDB collection if available
+      // For now, using default values
+      console.log('Country risk data not loaded from MongoDB, using default values');
 
       this.cache.lastUpdated = new Date();
-      console.log('Risk scoring data cache updated successfully');
+      console.log('Risk scoring data cache updated successfully from MongoDB');
     } catch (error) {
-      console.error('Error loading risk scoring data:', error);
+      console.error('Error loading risk scoring data from MongoDB:', error);
       throw error;
     }
   }
@@ -97,7 +75,7 @@ class RiskScoringDataService {
   private async ensureCacheValid() {
     const now = new Date();
     if (now.getTime() - this.cache.lastUpdated.getTime() > this.CACHE_TTL) {
-      await this.loadDataFromSheet();
+      await this.loadDataFromMongoDB();
     }
   }
 
@@ -144,7 +122,7 @@ class RiskScoringDataService {
   }
 
   public async refreshCache(): Promise<void> {
-    await this.loadDataFromSheet();
+    await this.loadDataFromMongoDB();
   }
 }
 

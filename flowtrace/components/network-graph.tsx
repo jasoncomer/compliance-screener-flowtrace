@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { NodeExpansionDialog } from "@/components/node-expansion-dialog"
 import { ConnectionEditDialog } from "@/components/connection-edit-dialog"
-import { formatDateConsistent } from "@/lib/utils"
+import { formatDateConsistent, wrapTextAtLimit } from "@/lib/utils"
 
 interface Node {
   id: string
@@ -1376,6 +1376,7 @@ export function NetworkGraph({
     (event: MouseEvent) => {
       const canvas = canvasRef.current
       if (!canvas) return
+      console.log('Mouse move event triggered');
 
       // Check if any modal is open by looking for dialog elements
       const openDialogs = document.querySelectorAll('[data-state="open"]')
@@ -1508,6 +1509,7 @@ export function NetworkGraph({
     (event: MouseEvent) => {
       const canvas = canvasRef.current
       if (!canvas) return
+      console.log('Mouse down event triggered');
 
       // Check if any modal is open by looking for dialog elements
       const openDialogs = document.querySelectorAll('[data-state="open"]')
@@ -1948,12 +1950,19 @@ export function NetworkGraph({
 
     // Delete button is now rendered as HTML overlay for better click reliability
 
-    // Entity label below node
+    // Entity label below node with text wrapping
     ctx.fillStyle = isDark ? "#e5e7eb" : "#374151"
     ctx.font = "12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
     ctx.textAlign = "center"
     ctx.textBaseline = "top"
-    ctx.fillText(node.label, node.x, node.y + nodeRadius + 8)
+    
+    // Wrap text at 35 characters for node labels
+    const wrappedLines = wrapTextAtLimit(node.label, 35)
+    const lineHeight = 14 // Slightly more than font size for spacing
+    
+    wrappedLines.forEach((line, index) => {
+      ctx.fillText(line, node.x, node.y + nodeRadius + 8 + (index * lineHeight))
+    })
   }
 
   // Canvas drawing effect - simplified dependencies

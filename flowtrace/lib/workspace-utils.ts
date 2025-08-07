@@ -76,7 +76,31 @@ const initDB = async () => {
 export const getAllWorkspaces = async (): Promise<Workspace[]> => {
   const database = await initDB()
   const workspaces = await database.getAll('workspaces')
-  return workspaces.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+  
+  // Filter out invalid workspaces and clean up the database
+  const validWorkspaces = workspaces.filter(workspace => {
+    if (!workspace || !workspace.id || !workspace.versions || workspace.versions.length === 0) {
+      console.warn('Found invalid workspace, will be cleaned up:', workspace?.id)
+      return false
+    }
+    return true
+  })
+  
+  // If we found invalid workspaces, clean them up
+  if (validWorkspaces.length < workspaces.length) {
+    console.log(`Cleaning up ${workspaces.length - validWorkspaces.length} invalid workspaces`)
+    for (const workspace of workspaces) {
+      if (!validWorkspaces.includes(workspace)) {
+        try {
+          await deleteWorkspaceFromDB(workspace.id)
+        } catch (error) {
+          console.error('Failed to clean up invalid workspace:', workspace.id, error)
+        }
+      }
+    }
+  }
+  
+  return validWorkspaces.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
 // Get workspace by ID
@@ -347,11 +371,19 @@ export const loadVersion = async (
   setHidePassThrough?: (hide: boolean) => void,
   setViewport?: (viewport: { x: number; y: number; zoom: number }) => void
 ): Promise<boolean> => {
-  const workspace = await getWorkspace(workspaceId)
-  if (!workspace) {
-    console.error('Workspace not found:', workspaceId)
-    return false
-  }
+  try {
+    const workspace = await getWorkspace(workspaceId)
+    if (!workspace) {
+      console.error('Workspace not found:', workspaceId)
+      // Clean up the invalid workspace reference
+      try {
+        await deleteWorkspaceFromDB(workspaceId)
+        console.log('Cleaned up invalid workspace reference:', workspaceId)
+      } catch (cleanupError) {
+        console.error('Failed to clean up invalid workspace:', workspaceId, cleanupError)
+      }
+      return false
+    }
 
   // Determine which version to load
   let targetId = versionId
@@ -398,6 +430,10 @@ export const loadVersion = async (
   }
 
   return true
+  } catch (error) {
+    console.error('Error loading workspace version:', error)
+    return false
+  }
 }
 
 // Promote version to master
@@ -699,5 +735,17 @@ export const migrateOldData = async (): Promise<void> => {
     
   } catch (error) {
     console.error('Error during data migration:', error)
+  }
+}
+
+// Clean up invalid workspaces
+export const cleanupInvalidWorkspaces = async (): Promise<void> => {
+  console.log('Cleaning up invalid workspaces...')
+  
+  try {
+    const workspaces = await getAllWorkspaces()
+    console.log(`Found ${workspaces.length} valid workspaces after cleanup`)
+  } catch (error) {
+    console.error('Error during workspace cleanup:', error)
   }
 } 

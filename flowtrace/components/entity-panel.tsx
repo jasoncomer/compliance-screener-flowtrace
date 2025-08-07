@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { fetchRiskScoringData } from '@/lib/api'
+import { fetchRiskScoringData, fetchSOTData, fetchTransactionData } from '@/lib/api'
 import { Shield, AlertTriangle, Copy, ExternalLink, AlertCircle, Zap, Edit3, Save, X, Info, ArrowRight, RotateCcw } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -10,6 +10,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
+import { getCounterpartyName, getSOTData, getEntityInfoWithOverride } from "@/lib/counterparty-utils"
+import { wrapTextAtLimit } from "@/lib/utils"
 
 interface EntityPanelProps {
   address: string
@@ -63,6 +65,33 @@ interface SecurityEvent {
   timeAgo: string
   severity: "high" | "medium" | "low"
   details?: string
+}
+
+interface TransactionData {
+  hash?: string
+  txid?: string
+  time?: number
+  block_date?: string | Date | number
+  inputs?: Array<{
+    addr: string
+    amt: string
+  }>
+  outputs?: Array<{
+    addr: string
+    amt: string
+  }>
+}
+
+interface TransactionWithName {
+  id: string
+  date: string
+  direction: 'in' | 'out'
+  usdAmount: string
+  btcAmount: string
+  counterparty: string
+  counterpartyName: string
+  txHash: string
+  loadingName: boolean
 }
 
 const mockSecurityEvents: SecurityEvent[] = [
@@ -236,6 +265,19 @@ const getNodeSpecificEvents = (nodeType?: string): SecurityEvent[] => {
 type FilterType = "all" | "high" | "medium" | "low"
 
 export function EntityPanel({ address, selectedNode, connections, onConnectNode, availableNodes, onAddNote, onUpdateNodeLabel, onRevertNodeLabel }: EntityPanelProps) {
+  const [isEditingLabel, setIsEditingLabel] = useState(false)
+  const [editedLabel, setEditedLabel] = useState("")
+  const [transactionsWithNames, setTransactionsWithNames] = useState<TransactionWithName[]>([])
+  const [sotData, setSotData] = useState<any[]>([])
+  const [riskData, setRiskData] = useState<any>(null)
+  const [isLoadingRiskData, setIsLoadingRiskData] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<FilterType>("all")
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false)
+  const [lastProcessedAddress, setLastProcessedAddress] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+
   // Debug logging for transaction count issue
   useEffect(() => {
     if (selectedNode) {
@@ -253,15 +295,30 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
   const [isLoadingData, setIsLoadingData] = useState(false);
   
   // Debug logging removed - infinite loop fixed
-  const [activeFilter, setActiveFilter] = useState<FilterType>("all")
   const [newNote, setNewNote] = useState("")
   const [isAddingNote, setIsAddingNote] = useState(false)
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false)
-  const [isEditingLabel, setIsEditingLabel] = useState(false)
-  const [editedLabel, setEditedLabel] = useState(selectedNode?.label || "")
-  const [riskData, setRiskData] = useState<any>(null)
-  const [isLoadingRiskData, setIsLoadingRiskData] = useState(false)
   const [activeRiskTab, setActiveRiskTab] = useState<'entity' | 'transaction' | 'jurisdiction'>('entity')
+  const [beneficialOwnerData, setBeneficialOwnerData] = useState<{
+    entityName: string;
+    entityType: string;
+    entityTags: string[];
+    isBeneficialOwnerOverride: boolean;
+    displayTitle: string;
+  } | null>(null)
+
+  // Load SOT data on component mount
+  useEffect(() => {
+    const loadSOTData = async () => {
+      try {
+        const data = await getSOTData()
+        setSotData(data)
+      } catch (error) {
+        console.error('Failed to load SOT data:', error)
+      }
+    }
+    loadSOTData()
+  }, [])
 
   // Update notes when selectedNode changes
   useEffect(() => {
@@ -270,11 +327,268 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
     setEditedLabel(selectedNode?.label || "")
     setIsEditingLabel(false)
     
-    // Fetch risk data when node is selected
+    // Fetch risk data and beneficial owner data when node is selected
     if (selectedNode?.address) {
       fetchRiskData()
+      fetchBeneficialOwnerData()
     }
   }, [selectedNode?.id])
+
+  // Function to fetch beneficial owner override data
+  const fetchBeneficialOwnerData = async () => {
+    if (!selectedNode?.address) return
+    
+    try {
+      const entityInfo = await getEntityInfoWithOverride(selectedNode.address)
+      setBeneficialOwnerData({
+        entityName: entityInfo.entityName,
+        entityType: entityInfo.entityType,
+        entityTags: entityInfo.entityTags,
+        isBeneficialOwnerOverride: entityInfo.isBeneficialOwnerOverride,
+        displayTitle: entityInfo.displayTitle
+      })
+      
+      console.log('Applied beneficial owner override in entity panel:', {
+        address: selectedNode.address,
+        originalEntityType: selectedNode.entity_type,
+        originalEntityTags: selectedNode.entity_tags,
+        beneficialOwnerEntityType: entityInfo.entityType,
+        beneficialOwnerEntityTags: entityInfo.entityTags,
+        isBeneficialOwnerOverride: entityInfo.isBeneficialOwnerOverride,
+        displayTitle: entityInfo.displayTitle
+      })
+    } catch (error) {
+      console.error('Error fetching beneficial owner data:', error)
+      setBeneficialOwnerData(null)
+    }
+  }
+
+  // Process transactions and resolve counterparty names
+  useEffect(() => {
+    const processTransactions = async () => {
+      console.log('🔍 EntityPanel: processTransactions called')
+      console.log('🔍 Selected node:', selectedNode)
+      
+      if (!selectedNode?.address) {
+        console.log('❌ No address found in selectedNode:', selectedNode)
+        setTransactionsWithNames([])
+        return
+      }
+
+      // Prevent double loading
+      if (isLoadingTransactions) {
+        console.log('⏳ Already loading transactions, skipping...')
+        return
+      }
+
+      // Check if we've already processed this address
+      if (lastProcessedAddress === selectedNode.address && transactionsWithNames.length > 0) {
+        console.log('✅ Already processed this address, skipping...')
+        return
+      }
+
+      setIsLoadingTransactions(true)
+      try {
+        console.log('📡 Fetching all transactions for address:', selectedNode.address)
+        
+        // Fetch transaction data from the API - get more transactions to ensure we capture all
+        const transactionData = await fetchTransactionData(selectedNode.address, 1, 100) // Get first 100 transactions to ensure we capture all
+        console.log('📊 Transaction data received:', transactionData)
+
+        if (!transactionData?.txs || !Array.isArray(transactionData.txs)) {
+          console.log('❌ No transaction data available or invalid format')
+          setTransactionsWithNames([])
+          setLastProcessedAddress(selectedNode.address)
+          return
+        }
+
+        console.log(`✅ Found ${transactionData.txs.length} transactions to process`)
+        console.log('📊 Raw transaction data structure:', {
+          total: transactionData.total,
+          txsLength: transactionData.txs?.length,
+          firstTx: transactionData.txs?.[0],
+          lastTx: transactionData.txs?.[transactionData.txs.length - 1]
+        })
+
+        // Process transactions and determine direction relative to the selected node
+        const processedTransactions = transactionData.txs.map((tx: TransactionData) => {
+          console.log('Processing transaction:', tx.txid, 'for address:', selectedNode.address)
+          
+          // Determine if this transaction is incoming or outgoing for the selected node
+          let direction: 'in' | 'out' = 'in'
+          let counterpartyAddress = ''
+          let amount = '0'
+
+          // Check if the selected node's address is in inputs (outgoing) or outputs (incoming)
+          const isInInputs = tx.inputs?.some((input: any) => input.addr?.toLowerCase() === selectedNode.address?.toLowerCase())
+          const isInOutputs = tx.outputs?.some((output: any) => output.addr?.toLowerCase() === selectedNode.address?.toLowerCase())
+
+          console.log('Transaction analysis:', {
+            txid: tx.txid,
+            isInInputs,
+            isInOutputs,
+            inputs: tx.inputs?.map(i => ({ addr: i.addr, amt: i.amt })),
+            outputs: tx.outputs?.map(o => ({ addr: o.addr, amt: o.amt }))
+          })
+
+          // If the address is not in either inputs or outputs, this transaction doesn't involve the selected address
+          if (!isInInputs && !isInOutputs) {
+            console.log('Transaction does not involve the selected address')
+            return null // Skip this transaction
+          }
+
+          if (isInInputs && isInOutputs) {
+            // This is a self-transfer or complex transaction
+            direction = 'out' // Default to outgoing for display purposes
+            console.log('Self-transfer detected')
+          } else if (isInInputs) {
+            // Selected node is in inputs - this is an outgoing transaction
+            direction = 'out'
+            // Find the counterparty (address in outputs that's not the selected node)
+            const counterpartyOutput = tx.outputs?.find((output: any) => output.addr?.toLowerCase() !== selectedNode.address?.toLowerCase())
+            counterpartyAddress = counterpartyOutput?.addr || 'Unknown'
+            amount = counterpartyOutput?.amt || '0'
+            console.log('Outgoing transaction - counterparty:', counterpartyAddress, 'amount:', amount)
+          } else if (isInOutputs) {
+            // Selected node is in outputs - this is an incoming transaction
+            direction = 'in'
+            // Find the counterparty (address in inputs that's not the selected node)
+            const counterpartyInput = tx.inputs?.find((input: any) => input.addr?.toLowerCase() !== selectedNode.address?.toLowerCase())
+            counterpartyAddress = counterpartyInput?.addr || 'Unknown'
+            amount = counterpartyInput?.amt || '0'
+            console.log('Incoming transaction - counterparty:', counterpartyAddress, 'amount:', amount)
+          }
+
+          // Convert satoshis to BTC
+          const btcAmount = (parseInt(amount) / 100000000).toFixed(8)
+          
+          // Calculate USD value (you might want to get this from the API or use a fixed rate)
+          const usdValue = (parseFloat(btcAmount) * 30000).toFixed(2) // Placeholder rate
+
+          // Safely convert timestamp to date
+          let dateString = 'Unknown'
+          
+          // Debug: Log all available fields in the transaction
+          console.log('🔍 Transaction fields for date parsing:', {
+            txid: tx.txid,
+            time: tx.time,
+            timeType: typeof tx.time,
+            hasTime: !!tx.time,
+            allFields: Object.keys(tx)
+          })
+          
+          // Try multiple timestamp fields that might be available
+          let timestamp = tx.time
+          if (!timestamp && (tx as any).timestamp) timestamp = (tx as any).timestamp
+          if (!timestamp && (tx as any).block_time) timestamp = (tx as any).block_time
+          if (!timestamp && (tx as any).date) timestamp = (tx as any).date
+          if (!timestamp && (tx as any).block_date) {
+            // block_date might be a string or Date object
+            const blockDate = (tx as any).block_date
+            if (typeof blockDate === 'string') {
+              // If it's already a date string, use it directly
+              dateString = blockDate.split('T')[0]
+              console.log('✅ Date from block_date string:', dateString)
+            } else if (blockDate instanceof Date) {
+              // If it's a Date object
+              dateString = blockDate.toISOString().split('T')[0]
+              console.log('✅ Date from block_date Date object:', dateString)
+            } else if (typeof blockDate === 'number') {
+              // If it's a timestamp
+              timestamp = blockDate
+            }
+          }
+          
+          if (timestamp && typeof timestamp === 'number' && timestamp > 0) {
+            try {
+              const date = new Date(timestamp * 1000)
+              if (!isNaN(date.getTime())) {
+                dateString = date.toISOString().split('T')[0]
+                console.log('✅ Date parsed successfully:', dateString, 'from timestamp:', timestamp)
+              } else {
+                console.warn('Invalid date from timestamp:', timestamp)
+              }
+            } catch (error) {
+              console.warn('Error parsing timestamp for transaction:', tx.txid, 'timestamp:', timestamp, 'error:', error)
+            }
+          } else {
+            console.warn('No valid timestamp found for transaction:', tx.txid, 'available fields:', Object.keys(tx))
+          }
+
+          return {
+            id: tx.hash || tx.txid,
+            date: dateString,
+            direction,
+            usdAmount: `$${parseFloat(usdValue).toLocaleString()}`,
+            btcAmount: `${btcAmount} BTC`,
+            counterparty: counterpartyAddress,
+            counterpartyName: '', // Will be resolved
+            txHash: tx.hash || tx.txid,
+            loadingName: true
+          }
+        }).filter(Boolean) // Remove null transactions
+
+        console.log(`✅ Processed ${processedTransactions.length} valid transactions`)
+        console.log(`📊 Filtered out ${transactionData.txs.length - processedTransactions.length} transactions that don't involve the selected address`)
+
+        // Resolve counterparty names
+        const transactionsWithNames = await Promise.all(
+          processedTransactions.map(async (tx: TransactionWithName) => {
+            try {
+              const name = await getCounterpartyName(tx.counterparty)
+              return {
+                ...tx,
+                counterpartyName: name,
+                loadingName: false
+              }
+            } catch (error) {
+              console.error('Error resolving counterparty name:', error)
+              return {
+                ...tx,
+                counterpartyName: `Unknown_${tx.counterparty.substring(0, 6)}`,
+                loadingName: false
+              }
+            }
+          })
+        )
+
+        console.log('✅ Final transactions with names:', transactionsWithNames)
+        setTransactionsWithNames(transactionsWithNames)
+        setLastProcessedAddress(selectedNode.address)
+        
+        // Calculate total pages based on API response
+        const total = transactionData.total || transactionData.txs?.length || 0
+        const calculatedTotalPages = Math.max(1, Math.ceil(total / pageSize))
+        console.log('📊 Pagination info:', { 
+          total, 
+          pageSize, 
+          calculatedTotalPages, 
+          apiTotal: transactionData.total,
+          apiTxsLength: transactionData.txs?.length,
+          processedCount: processedTransactions.length,
+          finalCount: transactionsWithNames.length
+        })
+        setTotalPages(calculatedTotalPages)
+
+      } catch (error) {
+        console.error('❌ Error fetching transactions:', error)
+        setTransactionsWithNames([])
+      } finally {
+        setIsLoadingTransactions(false)
+      }
+    }
+
+    processTransactions()
+  }, [selectedNode?.address]) // Removed sotData dependency to prevent double loading
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage)
+  }
+
+  const handlePageSizeChange = (newSize: number) => {
+    setPageSize(newSize)
+    setCurrentPage(1) // Reset to first page when changing page size
+  }
 
   // Fetch risk data when modal opens
   const fetchRiskData = async () => {
@@ -686,19 +1000,7 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
 
   // Get transactions for the selected node
   const getNodeTransactions = () => {
-    if (!selectedNode?.id || !connections) return []
-    
-    return connections.filter(conn => 
-      conn.from === selectedNode.id || conn.to === selectedNode.id
-    ).map(conn => ({
-      id: conn.txHash,
-      date: conn.date,
-      direction: conn.from === selectedNode.id ? 'out' : 'in',
-      usdAmount: conn.usdValue,
-      btcAmount: `${conn.amount} ${conn.currency}`,
-      counterparty: conn.from === selectedNode.id ? conn.to : conn.from,
-      txHash: conn.txHash
-    }))
+    return transactionsWithNames
   }
 
   const nodeTransactions = getNodeTransactions()
@@ -825,12 +1127,22 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                      <Tooltip>
                        <TooltipTrigger asChild>
                          <div className="flex items-center">
-                           <span 
-                             className="text-foreground text-lg font-semibold truncate max-w-[150px] sm:max-w-none cursor-pointer"
+                           <div 
+                             className="text-foreground text-lg font-semibold cursor-pointer"
                              onClick={() => setIsEditingLabel(true)}
                            >
-                             {selectedNode?.label || "Unknown Entity"}
-                           </span>
+                             {(() => {
+                               const displayText = beneficialOwnerData?.isBeneficialOwnerOverride 
+                                 ? beneficialOwnerData.displayTitle 
+                                 : (selectedNode?.label || "Unknown Entity");
+                               const wrappedLines = wrapTextAtLimit(displayText, 35);
+                               return wrappedLines.map((line, index) => (
+                                 <div key={index} className="leading-tight">
+                                   {line}
+                                 </div>
+                               ));
+                             })()}
+                           </div>
                            {selectedNode?.isUserDefinedLabel && (
                              <Badge variant="outline" className="ml-2 text-xs px-1.5 py-0.5 border-green-500 text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20">
                                Custom
@@ -883,15 +1195,29 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                    )}
                  </div>
               </div>
-              <CardDescription className="text-muted-foreground font-mono text-sm break-all">
-                {selectedNode?.address || address}
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <CardDescription className="text-muted-foreground font-mono text-sm break-all flex-1">
+                  {selectedNode?.address || address}
+                </CardDescription>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => {
+                    const addressToCopy = selectedNode?.address || address
+                    navigator.clipboard.writeText(addressToCopy)
+                  }}
+                  title="Copy address"
+                  className="ml-2 flex-shrink-0"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
               <div className="flex space-x-2 mt-2">
                 <Badge 
                   variant="outline" 
-                  className={getTypeBadge(selectedNode?.entity_type || selectedNode?.type)?.color}
+                  className={getTypeBadge(beneficialOwnerData?.entityType || selectedNode?.entity_type || selectedNode?.type)?.color}
                 >
-                  {getTypeBadge(selectedNode?.entity_type || selectedNode?.type)?.text}
+                  {getTypeBadge(beneficialOwnerData?.entityType || selectedNode?.entity_type || selectedNode?.type)?.text}
                 </Badge>
                 <Badge 
                   variant="outline"
@@ -930,11 +1256,16 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                   )}
                 </Badge>
               </div>
-              {selectedNode?.entity_tags && selectedNode.entity_tags.length > 0 && (
+              {(beneficialOwnerData?.entityTags || selectedNode?.entity_tags) && ((beneficialOwnerData?.entityTags?.length || 0) + (selectedNode?.entity_tags?.length || 0)) > 0 && (
                 <div className="mt-2">
-                  <div className="text-xs text-muted-foreground mb-1">Tags:</div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    Tags:
+                    {beneficialOwnerData?.isBeneficialOwnerOverride && (
+                      <span className="ml-1 text-xs opacity-75">(Beneficial Owner)</span>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-1">
-                    {selectedNode.entity_tags.map((tag, tagIndex) => (
+                    {(beneficialOwnerData?.entityTags || selectedNode?.entity_tags || []).map((tag, tagIndex) => (
                       <Badge 
                         key={tagIndex} 
                         variant="outline" 
@@ -947,17 +1278,6 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                 </div>
               )}
             </div>
-            <Button 
-              variant="ghost" 
-              size="sm"
-              onClick={() => {
-                const addressToCopy = selectedNode?.address || address
-                navigator.clipboard.writeText(addressToCopy)
-              }}
-              title="Copy address"
-            >
-              <Copy className="h-4 w-4" />
-            </Button>
             {selectedNode?.type === "custom" && onConnectNode && (
               <Button 
                 variant="default" 
@@ -1444,7 +1764,7 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-gray-200 dark:border-gray-700">
-                        <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 dark:text-gray-400">Time</th>
+                        <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 dark:text-gray-400">Date</th>
                         <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 dark:text-gray-400">Direction</th>
                         <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 dark:text-gray-400">Amount (USD)</th>
                         <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 dark:text-gray-400">Amount (BTC)</th>
@@ -1484,7 +1804,23 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
                               <span className="text-sm text-gray-600 dark:text-gray-400">{tx.btcAmount}</span>
                             </td>
                             <td className="py-3 px-2">
-                              <span className="text-sm text-gray-600 dark:text-gray-400">{tx.counterparty}</span>
+                              <div className="flex flex-col">
+                                {tx.loadingName ? (
+                                  <div className="flex items-center space-x-2">
+                                    <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <span className="text-sm text-gray-400">Loading...</span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                      {tx.counterpartyName}
+                                    </span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                                      {tx.counterparty.replace(/^searched_/, '').replace(/_child_\d+$/, '')}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -1506,21 +1842,44 @@ export function EntityPanel({ address, selectedNode, connections, onConnectNode,
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600 dark:text-gray-400">Show</span>
-              <select className="text-sm border rounded px-2 py-1 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300">
-                <option value="5">5</option>
-                <option value="8">8</option>
-                <option value="12">12</option>
+              <select 
+                value={pageSize}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                className="text-sm border rounded px-2 py-1 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
               </select>
-              <span className="text-sm text-gray-600 dark:text-gray-400">of {nodeTransactions.length} transactions</span>
+              <span className="text-sm text-gray-600 dark:text-gray-400">of {transactionsWithNames.length} transactions</span>
             </div>
             <div className="flex items-center space-x-2">
-              <button disabled className="p-1 rounded text-gray-400 cursor-not-allowed">
+              <button 
+                disabled={currentPage === 1}
+                onClick={() => handlePageChange(currentPage - 1)}
+                className={`p-1 rounded ${
+                  currentPage === 1 
+                    ? 'text-gray-400 cursor-not-allowed' 
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-chevron-left w-4 h-4" aria-hidden="true">
                   <path d="m15 18-6-6 6-6"></path>
                 </svg>
               </button>
-              <span className="text-sm text-gray-600 dark:text-gray-400">Page 1 of 20</span>
-              <button className="p-1 rounded text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white">
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                Page {currentPage} of {totalPages > 0 ? totalPages : 1}
+              </span>
+              <button 
+                disabled={currentPage === totalPages || totalPages === 0}
+                onClick={() => handlePageChange(currentPage + 1)}
+                className={`p-1 rounded ${
+                  currentPage === totalPages || totalPages === 0
+                    ? 'text-gray-400 cursor-not-allowed' 
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-chevron-right w-4 h-4" aria-hidden="true">
                   <path d="m9 18 6-6-6-6"></path>
                 </svg>

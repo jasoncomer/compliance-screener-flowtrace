@@ -25,7 +25,9 @@ import { format } from "date-fns"
 import { fetchTransactionData, fetchAttributionData, fetchRiskScoringData, fetchBatchRiskScoringData, fetchSOTData } from "../lib/api"
 import axios from "axios"
 import { captureApiError } from "../lib/debug-utils"
-import { getSafeLogoPath } from "../lib/logo-utils"
+import { getSafeLogoPath, getLogoUrl, getGoogleCloudLogoUrl, getLogoWithPriority, getDirectGoogleCloudLogoUrl } from "../lib/logo-utils"
+
+import { wrapTextAtLimit } from "../lib/utils"
 
 interface Node {
   id: string
@@ -489,11 +491,11 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               const cospendId = entityData?.cospend_id || inputAddress;
               
               // Use SOT data if available, otherwise fallback to basic formatting
-              let entityName = rawEntityName.charAt(0).toUpperCase() + rawEntityName.slice(1);
+              let entityName = rawEntityName ? rawEntityName.charAt(0).toUpperCase() + rawEntityName.slice(1) : 'Unknown Entity';
               let entityType = 'wallet' as const; // Default fallback
               let entityTags: string[] = [];
               
-              if (sotData.length > 0) {
+              if (sotData.length > 0 && rawEntityName) {
                 // Try multiple matching strategies for incoming transactions
                 const sotInfo = sotData.find(sot => 
                   // Match by proper_name (case insensitive) - this is the primary matching strategy
@@ -537,24 +539,27 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               
               const risk = addressRisks[inputAddress] || 'low';
               
-              // Get logo from API first, then fallback to local generation
+              // Get logo from API first, then fallback to dynamic API
               const apiLogo = addressLogos[inputAddress];
               let sotLogo = undefined;
               
               // Check SOT data for logo
-              if (sotData.length > 0) {
+              if (sotData.length > 0 && rawEntityName) {
                 const sotInfo = sotData.find(sot => 
                   sot.entity_id === entityId || 
                   sot.entity_id === rawEntityName ||
-                  sot.proper_name?.toLowerCase() === rawEntityName.toLowerCase()
+                  (sot.proper_name && rawEntityName && sot.proper_name.toLowerCase() === rawEntityName.toLowerCase())
                 );
                 if (sotInfo && sotInfo.logo) {
                   sotLogo = sotInfo.logo;
                 }
               }
               
-              const localLogo = getSafeLogoPath(entityName);
-              const logoPath = apiLogo || sotLogo || localLogo;
+              // Logo resolution with correct priority: API Logo -> Direct Google Cloud Storage -> SOT Logo -> Dynamic API
+              const googleCloudLogo = getGoogleCloudLogoUrl(entityId);
+              const directGoogleCloudLogo = getDirectGoogleCloudLogoUrl(entityId);
+              const dynamicLogo = getLogoUrl(entityId);
+              const logoPath = googleCloudLogo || directGoogleCloudLogo || apiLogo || sotLogo || dynamicLogo;
               
               // For incoming transactions, find the specific output amount that went to the target address
               const targetOutput = tx.outputs?.find((out: any) => out.addr === nodeAddress);
@@ -599,11 +604,11 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               const cospendId = entityData?.cospend_id || outputAddress;
               
               // Use SOT data if available, otherwise fallback to basic formatting
-              let entityName = rawEntityName.charAt(0).toUpperCase() + rawEntityName.slice(1);
+              let entityName = rawEntityName ? rawEntityName.charAt(0).toUpperCase() + rawEntityName.slice(1) : 'Unknown Entity';
               let entityType = 'wallet' as const; // Default fallback
               let entityTags: string[] = [];
               
-              if (sotData.length > 0) {
+              if (sotData.length > 0 && rawEntityName) {
                 // Try multiple matching strategies for outgoing transactions
                 const sotInfo = sotData.find(sot => 
                   // Match by proper_name (case insensitive) - this is the primary matching strategy
@@ -647,16 +652,16 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               
               const risk = addressRisks[outputAddress] || 'low';
               
-              // Get logo from API first, then fallback to local generation
+              // Get logo from API first, then fallback to dynamic API
               const apiLogo = addressLogos[outputAddress];
               let sotLogo = undefined;
               
               // Check SOT data for logo
-              if (sotData.length > 0) {
+              if (sotData.length > 0 && rawEntityName) {
                 const sotInfo = sotData.find(sot => 
                   sot.entity_id === entityId || 
                   sot.entity_id === rawEntityName ||
-                  sot.proper_name?.toLowerCase() === rawEntityName.toLowerCase()
+                  (sot.proper_name && rawEntityName && sot.proper_name.toLowerCase() === rawEntityName.toLowerCase())
                 );
                 if (sotInfo && sotInfo.logo) {
                   sotLogo = sotInfo.logo;
@@ -667,8 +672,11 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               const targetInput = tx.inputs?.find((inp: any) => inp.addr === nodeAddress);
               const specificAmount = targetInput ? targetInput.amt : tx.input_amt;
               
-              const localLogo = getSafeLogoPath(entityName);
-              const logoPath = apiLogo || sotLogo || localLogo;
+              // Logo resolution with correct priority: API Logo -> Direct Google Cloud Storage -> SOT Logo -> Dynamic API
+              const googleCloudLogo = getGoogleCloudLogoUrl(entityId);
+              const directGoogleCloudLogo = getDirectGoogleCloudLogoUrl(entityId);
+              const dynamicLogo = getLogoUrl(entityId);
+              const logoPath = googleCloudLogo || directGoogleCloudLogo || apiLogo || sotLogo || dynamicLogo;
               
               const transaction: Transaction = {
                 id: `tx_out_${index}`,
@@ -1055,7 +1063,8 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
               // Track unique transactions by txid to avoid duplicates
               const processedTxIds = new Set();
               
-              transactionData.txs.forEach((tx: any, index: number) => {
+              for (let index = 0; index < transactionData.txs.length; index++) {
+                const tx = transactionData.txs[index];
                 const nodeInInputs = tx.inputs?.some((inp: any) => inp.addr === nodeAddress);
                 const nodeInOutputs = tx.outputs?.some((out: any) => out.addr === nodeAddress);
 
@@ -1072,7 +1081,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 // Only process transactions where the node is actually involved
                 if (!nodeInInputs && !nodeInOutputs) {
                   console.log(`Skipping transaction ${index} - node not involved`);
-                  return;
+                  continue;
                 }
                 
                 // Skip pass-through transactions (same cospend_id for input and output)
@@ -1105,14 +1114,14 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                       inputCospendIds,
                       outputCospendIds
                     });
-                    return;
+                    continue;
                   }
                 }
                 
                 // Skip if we've already processed this transaction
                 if (processedTxIds.has(tx.txid)) {
                   console.log(`Skipping transaction ${index} - already processed txid: ${tx.txid}`);
-                  return;
+                  continue;
                 }
                 
                 console.log(`Processing transaction ${index} - node is involved, txid: ${tx.txid}`);
@@ -1126,126 +1135,49 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                   if (inputAddress && inputAddress !== nodeAddress) {
                       const entityData = addressEntities[inputAddress];
                       const entityId = entityData?.name?.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || `unknown_${inputAddress.slice(0, 8)}`;
-                      const entityName = entityData?.name || `Unknown Entity (${inputAddress.slice(0, 8)}...)`;
+                      const entityName = entityData?.name || `Unknown Entity`;
                       const cospendId = entityData?.cospend_id || inputAddress;
                       const risk = addressRisks[inputAddress] || 'low';
                       
-                      // Use SOT data if available, otherwise fallback to basic formatting
+                      // Use beneficial owner override logic to get entity information
                       let finalEntityName = entityName;
                       let entityType = 'wallet' as const; // Default fallback
                       let entityTags: string[] = [];
                       
-                      if (sotData.length > 0) {
-                        // Primary matching strategy: match cospend_id with entity_id
-                        let sotInfo = sotData.find(sot => 
-                          sot.entity_id && sot.entity_id.toLowerCase() === cospendId.toLowerCase()
+                      // Use existing attribution data instead of making new API calls
+                      if (entityData) {
+                        // Find SOT data for this entity
+                        const sotEntry = sotData.find(sot => 
+                          sot.entity_id?.toLowerCase() === entityData.name?.toLowerCase() ||
+                          sot.address === inputAddress
                         );
                         
-                        // Fallback matching strategies if primary match fails
-                        if (!sotInfo) {
-                          sotInfo = sotData.find(sot => 
-                            // Match by proper_name (case insensitive)
-                            (sot.proper_name && sot.proper_name.toLowerCase() === entityName.toLowerCase()) ||
-                            // Match by entity_id containing the entity name
-                            (sot.entity_id && sot.entity_id.toLowerCase().includes(entityName.toLowerCase())) ||
-                            // Match by proper_name containing the entity name
-                            (sot.proper_name && sot.proper_name.toLowerCase().includes(entityName.toLowerCase()))
-                          );
-                        }
-                        
-                        // Debug: Log what we're trying to match
-                        if (!sotInfo) {
-                          console.log('Debug: Trying to match incoming address:', {
-                            inputAddress,
-                            entityId,
-                            entityName,
-                            cospendId,
-                            addressPrefix: inputAddress.slice(0, 8),
-                            expectedEntityId: `unknown_${inputAddress.slice(0, 8)}`,
-                            availableSotIds: sotData.slice(0, 10).map(s => ({ 
-                              entity_id: s.entity_id, 
-                              proper_name: s.proper_name,
-                              address: s.address,
-                              cospend_id: s.cospend_id
-                            }))
-                          });
-                          
-                          // Also log a few sample SOT entries to see the structure
-                          console.log('Sample SOT entries (full):', JSON.stringify(sotData.slice(0, 3), null, 2));
-                          
-                          // Also log individual entries for better visibility
-                          sotData.slice(0, 3).forEach((entry, index) => {
-                            console.log(`SOT Entry ${index + 1}:`, {
-                              entity_id: entry.entity_id,
-                              proper_name: entry.proper_name,
-                              entity_type: entry.entity_type,
-                              address: entry.address,
-                              cospend_id: entry.cospend_id,
-                              allKeys: Object.keys(entry)
-                            });
-                          });
-                          
-                          // Check if any SOT entries have matching cospend_id
-                          const matchingCospend = sotData.find(s => s.cospend_id === inputAddress);
-                          if (matchingCospend) {
-                            console.log('Found matching cospend_id entry:', matchingCospend);
-                          } else {
-                            console.log('No matching cospend_id found for address:', inputAddress);
-                          }
-                          
-                          // Check if the Microstrategy address is in the SOT data
-                          const microstrategyAddress = '39PRJa1EbEsLAJdu2f526PAD6T9RhMVGw9';
-                          const microstrategyInSot = sotData.find(s => 
-                            s.cospend_id === microstrategyAddress || 
-                            s.address === microstrategyAddress ||
-                            s.entity_id?.includes('microstrategy') ||
-                            s.proper_name?.toLowerCase().includes('microstrategy')
-                          );
-                          if (microstrategyInSot) {
-                            console.log('Found Microstrategy in SOT data:', microstrategyInSot);
-                          } else {
-                            console.log('Microstrategy address not found in SOT data');
-                          }
-                        }
-                        if (sotInfo) {
-                          console.log('Found SOT match for incoming transaction:', {
-                            entityName,
-                            entityId,
-                            cospendId,
-                            sotEntityId: sotInfo.entity_id,
-                            sotEntityType: sotInfo.entity_type,
-                            sotEntityTags: sotInfo.entity_tags,
-                            sotProperName: sotInfo.proper_name,
-                            matchType: sotInfo.entity_id?.toLowerCase() === cospendId.toLowerCase() ? 'cospend_id_match' : 'fallback_match'
-                          });
-                          
-                          if (sotInfo.proper_name) {
-                            finalEntityName = sotInfo.proper_name;
-                          }
-                          if (sotInfo.entity_type) {
-                            entityType = sotInfo.entity_type as any;
-                          }
-                          if (sotInfo.entity_tags && Array.isArray(sotInfo.entity_tags)) {
-                            entityTags = sotInfo.entity_tags;
-                          }
-                        } else {
-                          console.log('No SOT match found for incoming transaction:', {
-                            entityName,
-                            entityId,
-                            availableSotIds: sotData.slice(0, 5).map(s => s.entity_id)
-                          });
+                        if (sotEntry) {
+                          finalEntityName = sotEntry.proper_name || entityName;
+                          entityType = (sotEntry.entity_type as any) || 'wallet';
+                          entityTags = sotEntry.entity_tags || [];
                         }
                       }
+                      
+                      console.log('Applied beneficial owner override for incoming transaction:', {
+                        inputAddress,
+                        originalEntityName: entityName,
+                        finalEntityName,
+                        entityType,
+                        entityTags
+                      });
                       
                       // Calculate the specific amount that went to the target address
                       const targetOutput = tx.outputs?.find((out: any) => out.addr === nodeAddress);
                       const specificAmount = targetOutput ? targetOutput.amt : 0;
                       
-                      // Get logo for this address
+                      // Get logo for this address with correct priority: API Logo -> Direct Google Cloud Storage -> SOT Logo -> Dynamic API
                       const apiLogo = addressLogos[inputAddress];
                       const sotLogo = sotData.find(sot => sot.address === inputAddress)?.logo;
-                      const localLogo = getSafeLogoPath(finalEntityName);
-                      const logoPath = apiLogo || sotLogo || localLogo;
+                      const googleCloudLogo = getGoogleCloudLogoUrl(entityId);
+                      const directGoogleCloudLogo = getDirectGoogleCloudLogoUrl(entityId);
+                      const dynamicLogo = getLogoUrl(entityId);
+                      const logoPath = googleCloudLogo || directGoogleCloudLogo || apiLogo || sotLogo || dynamicLogo;
                       
                       processedTransactions.push({
                         id: `tx_in_${index}`,
@@ -1287,60 +1219,45 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                     processedOutputAddresses.add(outputAddress);
                       const entityData = addressEntities[outputAddress];
                       const entityId = entityData?.name?.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || `unknown_${outputAddress.slice(0, 8)}`;
-                      const entityName = entityData?.name || `Unknown Entity (${outputAddress.slice(0, 8)}...)`;
+                      const entityName = entityData?.name || `Unknown Entity`;
                       const cospendId = entityData?.cospend_id || outputAddress;
                       const risk = addressRisks[outputAddress] || 'low';
                       
-                      // Use SOT data if available, otherwise fallback to basic formatting
+                      // Use beneficial owner override logic to get entity information
                       let finalEntityName = entityName;
                       let entityType = 'wallet' as const; // Default fallback
                       let entityTags: string[] = [];
                       
-                      if (sotData.length > 0) {
-                        // Try multiple matching strategies for outgoing transactions
-                        const sotInfo = sotData.find(sot => 
-                          // Match by proper_name (case insensitive) - this is the primary matching strategy
-                          (sot.proper_name && sot.proper_name.toLowerCase() === entityName.toLowerCase()) ||
-                          // Match by entity_id (case insensitive)
-                          (sot.entity_id && sot.entity_id.toLowerCase() === entityName.toLowerCase()) ||
-                          // Match by entity_id containing the entity name
-                          (sot.entity_id && sot.entity_id.toLowerCase().includes(entityName.toLowerCase())) ||
-                          // Match by proper_name containing the entity name
-                          (sot.proper_name && sot.proper_name.toLowerCase().includes(entityName.toLowerCase()))
+                      // Use existing attribution data instead of making new API calls
+                      if (entityData) {
+                        // Find SOT data for this entity
+                        const sotEntry = sotData.find(sot => 
+                          sot.entity_id?.toLowerCase() === entityData.name?.toLowerCase() ||
+                          sot.address === outputAddress
                         );
-                        if (sotInfo) {
-                          console.log('Found SOT match for outgoing transaction:', {
-                            entityName,
-                            entityId,
-                            sotEntityId: sotInfo.entity_id,
-                            sotEntityType: sotInfo.entity_type,
-                            sotEntityTags: sotInfo.entity_tags,
-                            sotProperName: sotInfo.proper_name
-                          });
-                          
-                          if (sotInfo.proper_name) {
-                            finalEntityName = sotInfo.proper_name;
-                          }
-                          if (sotInfo.entity_type) {
-                            entityType = sotInfo.entity_type as any;
-                          }
-                          if (sotInfo.entity_tags && Array.isArray(sotInfo.entity_tags)) {
-                            entityTags = sotInfo.entity_tags;
-                          }
-                        } else {
-                          console.log('No SOT match found for outgoing transaction:', {
-                            entityName,
-                            entityId,
-                            availableSotIds: sotData.slice(0, 5).map(s => s.entity_id)
-                          });
+                        
+                        if (sotEntry) {
+                          finalEntityName = sotEntry.proper_name || entityName;
+                          entityType = (sotEntry.entity_type as any) || 'wallet';
+                          entityTags = sotEntry.entity_tags || [];
                         }
                       }
                       
-                      // Get logo for this address
+                      console.log('Applied beneficial owner override for outgoing transaction:', {
+                        outputAddress,
+                        originalEntityName: entityName,
+                        finalEntityName,
+                        entityType,
+                        entityTags
+                      });
+                      
+                      // Get logo for this address with correct priority: API Logo -> Direct Google Cloud Storage -> SOT Logo -> Dynamic API
                       const apiLogo = addressLogos[outputAddress];
                       const sotLogo = sotData.find(sot => sot.address === outputAddress)?.logo;
-                      const localLogo = getSafeLogoPath(finalEntityName);
-                      const logoPath = apiLogo || sotLogo || localLogo;
+                      const googleCloudLogo = getGoogleCloudLogoUrl(entityId);
+                      const directGoogleCloudLogo = getDirectGoogleCloudLogoUrl(entityId);
+                      const dynamicLogo = getLogoUrl(entityId);
+                      const logoPath = googleCloudLogo || directGoogleCloudLogo || apiLogo || sotLogo || dynamicLogo;
                       
                       // For outgoing transactions, process each individual UTXO (input) from the target address
                       const targetInputs = tx.inputs?.filter((inp: any) => inp.addr === nodeAddress) || [];
@@ -1410,7 +1327,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                       }
                     }
                 }
-              });
+              }
               
               console.log('Processed transactions:', processedTransactions.length);
               console.log('Sample processed transactions:', processedTransactions.slice(0, 3));
@@ -1550,10 +1467,10 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
     
     const filtered = allTransactions.filter((tx) => {
       const matchesSearch =
-        tx.entityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        tx.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        tx.entityId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        tx.txId.toLowerCase().includes(searchQuery.toLowerCase())
+        (tx.entityName?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (tx.address?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (tx.entityId?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (tx.txId?.toLowerCase() || '').includes(searchQuery.toLowerCase())
 
       const matchesRisk = filterRisk === "all" || tx.risk === filterRisk
       const matchesEntityType = filterEntityType === "all" || tx.entityType === filterEntityType
@@ -1595,11 +1512,11 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
       let aVal: any, bVal: any
 
       if (sortBy === "entityName") {
-        aVal = a.entityName.toLowerCase()
-        bVal = b.entityName.toLowerCase()
+        aVal = a.entityName?.toLowerCase() || ''
+        bVal = b.entityName?.toLowerCase() || ''
       } else if (sortBy === "entityId") {
-        aVal = a.entityId.toLowerCase()
-        bVal = b.entityId.toLowerCase()
+        aVal = a.entityId?.toLowerCase() || ''
+        bVal = b.entityId?.toLowerCase() || ''
       } else if (sortBy === "amount") {
         aVal = Number.parseFloat(a.amount)
         bVal = Number.parseFloat(b.amount)
@@ -1611,14 +1528,14 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
         aVal = riskOrder[a.risk]
         bVal = riskOrder[b.risk]
       } else if (sortBy === "entityType") {
-        aVal = a.entityType.toLowerCase()
-        bVal = b.entityType.toLowerCase()
+        aVal = a.entityType?.toLowerCase() || ''
+        bVal = b.entityType?.toLowerCase() || ''
       } else if (sortBy === "direction") {
         aVal = a.direction === "out" ? 1 : 0
         bVal = b.direction === "out" ? 1 : 0
       } else if (sortBy === "txId") {
-        aVal = a.txId.toLowerCase()
-        bVal = b.txId.toLowerCase()
+        aVal = a.txId?.toLowerCase() || ''
+        bVal = b.txId?.toLowerCase() || ''
       }
 
       if (typeof aVal === "string" && typeof bVal === "string") {
@@ -2091,6 +2008,7 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                 TXID
                 {getSortIcon("txId")}
               </div>
+              <div className="col-span-1"></div>
             </div>
 
             {/* Scrollable Content */}
@@ -2147,43 +2065,32 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                         } ${isProcessed ? "opacity-75" : ""}`}
                         onClick={() => handleTransactionToggle(tx.id)}
                       >
-                        <div className="col-span-1">
+                        <div className="col-span-1 flex justify-center">
                           <Checkbox
                             checked={selectedTransactions.has(tx.id)}
                             onChange={() => handleTransactionToggle(tx.id)}
-                            className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                            className="data-[state=checked]:bg-primary data-[state=checked]:border-primary h-3 w-3"
                           />
                         </div>
                         <div className="col-span-2">
                           <div className="flex items-center">
-                            {tx.logo ? (
-                              <img 
-                                src={tx.logo} 
-                                alt={tx.entityName} 
-                                className="w-6 h-6 rounded-full mr-2 border border-border"
-                                onError={(e) => {
-                                  console.log(`Logo failed to load for ${tx.entityName}:`, tx.logo);
-                                  e.currentTarget.style.display = 'none'
-                                }}
-                                onLoad={(e) => {
-                                  console.log(`Logo loaded successfully for ${tx.entityName}:`, tx.logo);
-                                }}
-                              />
-                            ) : (
-                              <div className="w-6 h-6 rounded-full mr-2 border border-border bg-muted flex items-center justify-center">
-                                <span className="text-xs font-bold text-muted-foreground">
-                                  {tx.entityName.charAt(0).toUpperCase()}
-                                </span>
-                              </div>
-                            )}
-                            <div className="font-medium text-foreground text-sm">{tx.entityName}</div>
+                            <div className="font-medium text-foreground text-sm">
+                              {(() => {
+                                const wrappedLines = wrapTextAtLimit(tx.entityName, 35);
+                                return wrappedLines.map((line, index) => (
+                                  <div key={index} className="leading-tight">
+                                    {line}
+                                  </div>
+                                ));
+                              })()}
+                            </div>
                             {isProcessed && (
                               <Badge variant="outline" className="ml-2 text-xs bg-orange-100 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-600">
                                 Expanded
                               </Badge>
                             )}
                           </div>
-                          <div className="text-muted-foreground font-mono text-xs truncate ml-8">{tx.address.slice(0, 12)}...</div>
+                          <div className="text-muted-foreground font-mono text-xs truncate">{tx.address.slice(0, 12)}...</div>
                         </div>
                         <div className="col-span-2">
                           <div className="font-mono text-foreground text-sm truncate" title={tx.entityId}>{tx.entityId}</div>
@@ -2234,6 +2141,28 @@ export function NodeExpansionDialog({ nodeId, node, onExpand, onClose, existingC
                           >
                             {tx.txId.slice(0, 12)}...
                           </div>
+                        </div>
+                        <div className="col-span-1 flex justify-end items-start">
+                          {tx.logo ? (
+                            <img 
+                              src={tx.logo} 
+                              alt={tx.entityName} 
+                              className="w-6 h-6 rounded-full border border-border mt-1"
+                              onError={(e) => {
+                                console.log(`Logo failed to load for ${tx.entityName}:`, tx.logo);
+                                e.currentTarget.style.display = 'none'
+                              }}
+                              onLoad={(e) => {
+                                console.log(`Logo loaded successfully for ${tx.entityName}:`, tx.logo);
+                              }}
+                            />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full border border-border bg-muted flex items-center justify-center mt-1">
+                              <span className="text-xs font-bold text-muted-foreground">
+                                {tx.entityName.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

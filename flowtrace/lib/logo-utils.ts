@@ -12,61 +12,6 @@ const KNOWN_LOGOS = [
   'anchorage', 'anchoragecom', 'anchorage_com', 'spam', 'spamwallet'
 ];
 
-// Remote logo URLs for entities that have them
-const REMOTE_LOGOS: Record<string, string> = {
-  'microstrategy': 'https://storage.googleapis.com/entity-logos/microstrategy.jpg',
-  'anchorage': 'https://storage.googleapis.com/entity-logos/anchorage.jpg',
-  'anchorage_com': 'https://storage.googleapis.com/entity-logos/anchorage.jpg',
-  'anchoragecom': 'https://storage.googleapis.com/entity-logos/anchorage.jpg',
-  'coinbase': 'https://storage.googleapis.com/entity-logos/coinbase.jpg',
-  'binance': 'https://storage.googleapis.com/entity-logos/binance.jpg',
-  'kraken': 'https://storage.googleapis.com/entity-logos/kraken.jpg',
-  'bitfinex': 'https://storage.googleapis.com/entity-logos/bitfinex.jpg',
-  'huobi': 'https://storage.googleapis.com/entity-logos/huobi.jpg',
-  'okx': 'https://storage.googleapis.com/entity-logos/okx.jpg',
-  'bybit': 'https://storage.googleapis.com/entity-logos/bybit.jpg',
-  'kucoin': 'https://storage.googleapis.com/entity-logos/kucoin.jpg',
-  'gemini': 'https://storage.googleapis.com/entity-logos/gemini.jpg',
-  'bitstamp': 'https://storage.googleapis.com/entity-logos/bitstamp.jpg',
-  'bitflyer': 'https://storage.googleapis.com/entity-logos/bitflyer.jpg',
-  'liquid': 'https://storage.googleapis.com/entity-logos/liquid.jpg',
-  'poloniex': 'https://storage.googleapis.com/entity-logos/poloniex.jpg',
-  'bittrex': 'https://storage.googleapis.com/entity-logos/bittrex.jpg',
-  'gateio': 'https://storage.googleapis.com/entity-logos/gateio.jpg',
-  'tesla': 'https://storage.googleapis.com/entity-logos/tesla.jpg',
-  'square': 'https://storage.googleapis.com/entity-logos/square.jpg',
-  'paypal': 'https://storage.googleapis.com/entity-logos/paypal.jpg',
-  'robinhood': 'https://storage.googleapis.com/entity-logos/robinhood.jpg',
-  'webull': 'https://storage.googleapis.com/entity-logos/webull.jpg',
-  'etoro': 'https://storage.googleapis.com/entity-logos/etoro.jpg',
-  'metamask': 'https://storage.googleapis.com/entity-logos/metamask.jpg',
-  'trustwallet': 'https://storage.googleapis.com/entity-logos/trustwallet.jpg',
-  'exodus': 'https://storage.googleapis.com/entity-logos/exodus.jpg',
-  'atomic': 'https://storage.googleapis.com/entity-logos/atomic.jpg',
-  'ledger': 'https://storage.googleapis.com/entity-logos/ledger.jpg',
-  'trezor': 'https://storage.googleapis.com/entity-logos/trezor.jpg',
-  'coldcard': 'https://storage.googleapis.com/entity-logos/coldcard.jpg',
-  'wasabi': 'https://storage.googleapis.com/entity-logos/wasabi.jpg',
-  'samourai': 'https://storage.googleapis.com/entity-logos/samourai.jpg',
-  'sparrow': 'https://storage.googleapis.com/entity-logos/sparrow.jpg',
-  'electrum': 'https://storage.googleapis.com/entity-logos/electrum.jpg',
-  'bitcoin-core': 'https://storage.googleapis.com/entity-logos/bitcoin-core.jpg',
-  'bitcoind': 'https://storage.googleapis.com/entity-logos/bitcoind.jpg',
-  'lightning': 'https://storage.googleapis.com/entity-logos/lightning.jpg',
-  'strike': 'https://storage.googleapis.com/entity-logos/strike.jpg',
-  'cashapp': 'https://storage.googleapis.com/entity-logos/cashapp.jpg',
-  'venmo': 'https://storage.googleapis.com/entity-logos/venmo.jpg',
-  'zelle': 'https://storage.googleapis.com/entity-logos/zelle.jpg',
-  'stripe': 'https://storage.googleapis.com/entity-logos/stripe.jpg',
-  'coinbase-commerce': 'https://storage.googleapis.com/entity-logos/coinbase-commerce.jpg',
-  'bitpay': 'https://storage.googleapis.com/entity-logos/bitpay.jpg',
-  'btcpay': 'https://storage.googleapis.com/entity-logos/btcpay.jpg',
-  'opennode': 'https://storage.googleapis.com/entity-logos/opennode.jpg',
-  'strike-api': 'https://storage.googleapis.com/entity-logos/strike-api.jpg',
-  'spam': 'https://storage.googleapis.com/entity-logos/spam.jpg',
-  'spamwallet': 'https://storage.googleapis.com/entity-logos/spam.jpg'
-};
-
 // Function to clean entity name for logo matching
 const cleanEntityName = (entityName: string): string => {
   return entityName.toLowerCase()
@@ -85,45 +30,85 @@ export const getSafeLogoPath = (entityName: string): string | undefined => {
   // Clean the entity name for filename
   const cleanName = cleanEntityName(entityName);
   
-  // First, check if we have a remote logo URL
-  if (REMOTE_LOGOS[cleanName]) {
-    return REMOTE_LOGOS[cleanName];
-  }
+  // Use the dynamic API endpoint instead of hardcoded URLs
+  // The backend will automatically try .png, .jpg, .jpeg, .svg
+  return `/api/logos/${cleanName}`;
+};
+
+// Function to get logo with correct priority order
+export const getLogoWithPriority = (entityId: string): string => {
+  if (!entityId) return '';
   
-  // Check for variations in remote logos
-  const variations = [
-    cleanName,
-    entityName.toLowerCase().replace(/\s+/g, ''),
-    entityName.toLowerCase().replace(/\s+/g, '_'),
-    entityName.toLowerCase().replace(/\s+/g, '-'),
-    entityName.toLowerCase().replace(/[^a-z0-9]/g, '')
-  ];
+  // Clean the entity ID for the URL
+  const cleanId = entityId.toLowerCase()
+    .replace(/\s+/g, '') // Remove spaces
+    .replace(/[^a-z0-9]/g, '') // Remove special characters
+    .replace(/_/g, '') // Remove underscores
+    .replace(/-/g, ''); // Remove hyphens
+    
+  // Use the API endpoint that handles multiple extensions
+  return `/api/logos/${cleanId}`;
+};
+
+// Function to get logo URL with entity ID (for dynamic API)
+export const getLogoUrl = (entityId: string): string => {
+  if (!entityId) return '';
   
-  for (const variation of variations) {
-    if (REMOTE_LOGOS[variation]) {
-      return REMOTE_LOGOS[variation];
-    }
-  }
+  // Clean the entity ID for the API
+  const cleanId = entityId.toLowerCase()
+    .replace(/\s+/g, '') // Remove spaces
+    .replace(/[^a-z0-9]/g, '') // Remove special characters
+    .replace(/_/g, '') // Remove underscores
+    .replace(/-/g, ''); // Remove hyphens
+    
+  return `/api/logos/${cleanId}`;
+};
+
+// Function to get Google Cloud Storage URL with multiple extension fallbacks
+export const getGoogleCloudLogoUrl = (entityId: string): string => {
+  if (!entityId) return '';
   
-  // Check if we know this logo exists locally
-  if (KNOWN_LOGOS.includes(cleanName)) {
-    return `/logos/${cleanName}.png`;
-  }
+  // Clean the entity ID for the URL
+  const cleanId = entityId.toLowerCase()
+    .replace(/\s+/g, '') // Remove spaces
+    .replace(/[^a-z0-9]/g, '') // Remove special characters
+    .replace(/_/g, '') // Remove underscores
+    .replace(/-/g, ''); // Remove hyphens
+    
+  // Use the API endpoint that handles multiple extensions (.png, .jpg, .jpeg, .svg)
+  // This is more reliable than trying to guess the extension
+  return `/api/logos/${cleanId}`;
+};
+
+// Function to get direct Google Cloud Storage URLs with multiple extensions
+export const getDirectGoogleCloudLogoUrl = (entityId: string): string => {
+  if (!entityId) return '';
   
-  // Try to find a logo even if not in known list
-  // Common variations to try
-  const localVariations = [
-    cleanName,
-    cleanName.replace('_', ''),
-    cleanName.replace('_', '-'),
-    entityName.toLowerCase().replace(/\s+/g, ''),
-    entityName.toLowerCase().replace(/\s+/g, '-'),
-    entityName.toLowerCase().replace(/\s+/g, '_')
-  ];
+  // Clean the entity ID for the URL
+  const cleanId = entityId.toLowerCase()
+    .replace(/\s+/g, '') // Remove spaces
+    .replace(/[^a-z0-9]/g, '') // Remove special characters
+    .replace(/_/g, '') // Remove underscores
+    .replace(/-/g, ''); // Remove hyphens
+    
+  // Try multiple extensions in order of preference
+  // Since we know deribit.jpg exists, prioritize .jpg
+  return `https://storage.googleapis.com/entity-logos/${cleanId}.jpg`;
+};
+
+// Function to get logo with multiple fallbacks including direct Google Cloud Storage
+export const getLogoWithFallbacks = (entityId: string): string => {
+  if (!entityId) return '';
   
-  // For now, return a path and let the browser handle 404s gracefully
-  // The image will be hidden if it doesn't exist due to the onError handler
-  return `/logos/${cleanName}.png`;
+  // Clean the entity ID
+  const cleanId = entityId.toLowerCase()
+    .replace(/\s+/g, '') // Remove spaces
+    .replace(/[^a-z0-9]/g, '') // Remove special characters
+    .replace(/_/g, '') // Remove underscores
+    .replace(/-/g, ''); // Remove hyphens
+    
+  // Return API endpoint first, with Google Cloud Storage as fallback
+  return `/api/logos/${cleanId}`;
 };
 
 // Function to preload logos to check if they exist

@@ -22,7 +22,7 @@ router.get('/:entityId', async (req, res, next) => {
     let contentType = 'image/png';
 
     for (const ext of possibleExtensions) {
-      const fileName = `logos/${entityId}${ext}`;
+      const fileName = `${entityId}${ext}`;
       try {
         const [exists] = await bucket.file(fileName).exists();
         if (exists) {
@@ -40,7 +40,7 @@ router.get('/:entityId', async (req, res, next) => {
       return res.status(404).json({ error: true, message: 'Logo not found for this entity' });
     }
 
-    const fileName = `logos/${entityId}${fileExtension}`;
+    const fileName = `${entityId}${fileExtension}`;
     const file = bucket.file(fileName);
 
     try {

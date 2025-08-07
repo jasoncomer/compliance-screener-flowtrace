@@ -4,6 +4,7 @@ import * as sotService from './sot.service';
 import { fetchAttributions } from './attribution.service';
 import { BtcTransaction, SOTV2 } from '@src/models';
 import { RiskScoringResponse, EntityRiskFactor, JurisdictionRiskFactor, TransactionRiskFactor, RiskFactorCollection, TransactionInfo, RiskScoringConfig } from '@src/types/riskScoring';
+import { modelFactory } from '@src/db/modelFactory';
 
 export class RiskScoringService {
   private config: RiskScoringConfig = {
@@ -378,29 +379,50 @@ export class RiskScoringService {
     // First try to find entity by ENS address
     const { data } = await fetchAttributions([address]);
 
-    if (!data) {
+    if (!data || !data.length) {
       return null;
     }
 
-    let attribution;
-    if (data.length) {
-      attribution = data[0].entity;
-    }
-    if (!attribution) {
+    const attribution = data[0];
+    const entityId = attribution.entity;
+    const beneficialOwnerId = attribution.bo;
+
+    if (!entityId) {
       return null;
     }
 
-    let sot = await sotService.getSOT(attribution);
-
-    if (!sot) {
+    // Get entity SOT data
+    let entitySOT = await sotService.getSOT(entityId);
+    if (!entitySOT) {
       // reference data uses canonical instead of entity_id
-      sot = await sotService.getSOTByUrl(attribution);
+      entitySOT = await sotService.getSOTByUrl(entityId);
     }
 
-    if (!sot) {
-      return null;
+    // Get beneficial owner SOT data if it exists and is different from entity
+    let beneficialOwnerSOT: SOTV2 | null = null;
+    if (beneficialOwnerId && beneficialOwnerId !== entityId) {
+      beneficialOwnerSOT = await sotService.getSOT(beneficialOwnerId);
+      if (!beneficialOwnerSOT) {
+        beneficialOwnerSOT = await sotService.getSOTByUrl(beneficialOwnerId);
+      }
     }
 
-    return sot;
+    // Apply beneficial owner override logic
+    if (beneficialOwnerSOT && beneficialOwnerId !== entityId) {
+      console.log('Applying beneficial owner override in risk scoring:', {
+        address,
+        originalEntity: entityId,
+        beneficialOwner: beneficialOwnerId,
+        originalEntityType: entitySOT?.entity_type,
+        beneficialOwnerEntityType: beneficialOwnerSOT.entity_type,
+        originalEntityTags: entitySOT?.entity_tags,
+        beneficialOwnerEntityTags: beneficialOwnerSOT.entity_tags
+      });
+
+      // Return beneficial owner SOT data instead of entity SOT data
+      return beneficialOwnerSOT;
+    }
+
+    return entitySOT;
   }
 }

@@ -292,12 +292,12 @@ export function ConnectionDialog({
       
       switch (field) {
         case "label":
-          aValue = a.label.toLowerCase()
-          bValue = b.label.toLowerCase()
+          aValue = (a.label || "").toLowerCase()
+          bValue = (b.label || "").toLowerCase()
           break
         case "type":
-          aValue = a.type.toLowerCase()
-          bValue = b.type.toLowerCase()
+          aValue = (a.type || "").toLowerCase()
+          bValue = (b.type || "").toLowerCase()
           break
         case "address":
           aValue = (a.address || "").toLowerCase()
@@ -325,8 +325,8 @@ export function ConnectionDialog({
           bValue = nodeDates[bDateKey] || new Date(0)
           break
         default:
-          aValue = a.label.toLowerCase()
-          bValue = b.label.toLowerCase()
+          aValue = (a.label || "").toLowerCase()
+          bValue = (b.label || "").toLowerCase()
       }
       
       if (aValue < bValue) return direction === "asc" ? -1 : 1
@@ -341,8 +341,8 @@ export function ConnectionDialog({
       node.id !== sourceNodeId && 
       node.type !== "passthrough" &&
       node.type !== "bridge" &&
-      (node.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-       node.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      ((node.label && node.label.toLowerCase().includes(searchQuery.toLowerCase())) ||
+       (node.type && node.type.toLowerCase().includes(searchQuery.toLowerCase())) ||
        (node.address && node.address.toLowerCase().includes(searchQuery.toLowerCase())))
     )
     

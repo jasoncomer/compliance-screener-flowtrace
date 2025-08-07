@@ -114,8 +114,20 @@ export function WorkspaceManager({
   }
 
   const handleLoadWorkspace = (workspace: Workspace) => {
-    onLoadWorkspace(workspace)
-    onOpenChange(false)
+    try {
+      // Validate workspace before loading
+      if (!workspace || !workspace.id || !workspace.versions || workspace.versions.length === 0) {
+        console.error('Invalid workspace detected:', workspace)
+        alert('This workspace appears to be corrupted and cannot be loaded.')
+        return
+      }
+      
+      onLoadWorkspace(workspace)
+      onOpenChange(false)
+    } catch (error) {
+      console.error('Error loading workspace:', error)
+      alert('Failed to load workspace. Please try again.')
+    }
   }
 
   const handleDeleteWorkspace = (workspaceId: string) => {

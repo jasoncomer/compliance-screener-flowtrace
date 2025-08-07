@@ -22,9 +22,10 @@ import { SaveStatus } from "@/components/save-status"
 import Image from "next/image"
 import { formatDateConsistent, isValidAddress, generateUniqueTxHash } from "@/lib/utils"
 import { autoSaveManager } from "@/lib/auto-save"
-import { migrateOldData, loadVersion, updateMasterVersion, createWorkspace, type Workspace, getWorkspace } from "@/lib/workspace-utils"
+import { migrateOldData, loadVersion, updateMasterVersion, createWorkspace, type Workspace, getWorkspace, cleanupInvalidWorkspaces } from "@/lib/workspace-utils"
 import { fetchAddressData, fetchAttributionData, fetchRiskScoringData, fetchTransactionData, fetchSOTData } from '@/lib/api';
-import { getSafeLogoPath } from '@/lib/logo-utils';
+import { getSafeLogoPath, getLogoUrl, getGoogleCloudLogoUrl, getDirectGoogleCloudLogoUrl } from '@/lib/logo-utils';
+import { getEntityInfoWithOverride } from '@/lib/counterparty-utils';
 import axios from 'axios';
 import { debugLogger, captureApiError } from '@/lib/debug-utils';
 import { DebugPanel } from '@/components/debug-panel';
@@ -1069,58 +1070,90 @@ export default function FlowTraceApp() {
       ]);
       console.log('All API calls completed for address:', address);
 
-      // Process attribution data
+      // Process attribution data with beneficial owner override
       let entityName = "Unknown Entity";
       let entityType = "wallet";
       let logo = undefined;
       let entityTypeFromSOT = undefined;
       let entityTags = [];
       
-      if (attributionData?.data && attributionData.data.length > 0) {
-        const entity = attributionData.data[0].entity;
-        if (entity) {
-          // Try to fetch SOT data for this entity to get proper name and entity_type
-          try {
-            const sotData = await fetchSOTData();
-            if (sotData && Array.isArray(sotData)) {
-              const sotEntry = sotData.find(entry => entry.entity_id === entity);
-              if (sotEntry) {
-                // Use proper_name from SOT data if available, otherwise fall back to entity name
-                entityName = sotEntry.proper_name || entity.charAt(0).toUpperCase() + entity.slice(1);
-                entityTypeFromSOT = sotEntry.entity_type;
-                entityTags = sotEntry.entity_tags || [];
-                console.log('Found SOT data for entity:', entity, {
-                  proper_name: sotEntry.proper_name,
-                  entity_type: entityTypeFromSOT,
-                  entity_tags: entityTags
-                });
-              } else {
-                // Fall back to entity name if no SOT data found
-                entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
-                console.log('No SOT data found for entity:', entity, 'using fallback name');
+      // Use beneficial owner override logic to get entity information
+      try {
+        const entityInfo = await getEntityInfoWithOverride(address);
+        entityName = entityInfo.entityName;
+        entityType = entityInfo.entityType;
+        entityTags = entityInfo.entityTags;
+        logo = entityInfo.logo;
+        
+        console.log('Applied beneficial owner override for node:', {
+          address,
+          entityName: entityInfo.entityName,
+          entityType: entityInfo.entityType,
+          entityTags: entityInfo.entityTags,
+          isBeneficialOwnerOverride: entityInfo.isBeneficialOwnerOverride,
+          displayTitle: entityInfo.displayTitle
+        });
+        
+        // Use displayTitle for the node label if there's a beneficial owner override
+        // But remove "Deposit Address" suffix for cleaner graph display
+        if (entityInfo.isBeneficialOwnerOverride) {
+          let cleanDisplayTitle = entityInfo.displayTitle;
+          // Remove "Deposit Address" suffix if present
+          if (cleanDisplayTitle.includes('Deposit Address')) {
+            cleanDisplayTitle = cleanDisplayTitle.replace(/\s*Deposit Address$/, '');
+          }
+          entityName = cleanDisplayTitle;
+        }
+      } catch (error) {
+        console.error('Error applying beneficial owner override for node:', address, error);
+        
+        // Fallback to original logic if beneficial owner override fails
+        if (attributionData?.data && attributionData.data.length > 0) {
+          const entity = attributionData.data[0].entity;
+          if (entity) {
+            // Try to fetch SOT data for this entity to get proper name and entity_type
+            try {
+              const sotData = await fetchSOTData();
+              if (sotData && Array.isArray(sotData)) {
+                const sotEntry = sotData.find(entry => entry.entity_id === entity);
+                if (sotEntry) {
+                  // Use proper_name from SOT data if available, otherwise fall back to entity name
+                  entityName = sotEntry.proper_name || entity.charAt(0).toUpperCase() + entity.slice(1);
+                  entityTypeFromSOT = sotEntry.entity_type;
+                  entityTags = sotEntry.entity_tags || [];
+                  console.log('Found SOT data for entity:', entity, {
+                    proper_name: sotEntry.proper_name,
+                    entity_type: entityTypeFromSOT,
+                    entity_tags: entityTags
+                  });
+                } else {
+                  // Fall back to entity name if no SOT data found
+                  entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
+                  console.log('No SOT data found for entity:', entity, 'using fallback name');
+                }
               }
+            } catch (error) {
+              console.log('Could not fetch SOT data for entity:', entity, error);
+              // Fall back to entity name if SOT fetch fails
+              entityName = entity ? entity.charAt(0).toUpperCase() + entity.slice(1) : 'Unknown Entity';
             }
-          } catch (error) {
-            console.log('Could not fetch SOT data for entity:', entity, error);
-            // Fall back to entity name if SOT fetch fails
-            entityName = entity.charAt(0).toUpperCase() + entity.slice(1);
+            
+            // Determine entity type based on entity name or other logic (fallback)
+            if (entity && entity.toLowerCase().includes('exchange') || 
+                entity && ['binance', 'coinbase', 'kraken', 'bitfinex', 'huobi', 'okx'].includes(entity.toLowerCase())) {
+              entityType = "exchange";
+            } else if (entity && entity.toLowerCase().includes('mixer') || 
+                       entity && ['wasabi', 'samourai', 'joinmarket'].includes(entity.toLowerCase())) {
+              entityType = "mixer";
+            } else if (entity && entity.toLowerCase().includes('defi') || 
+                       entity && ['uniswap', 'sushiswap', 'aave', 'compound'].includes(entity.toLowerCase())) {
+              entityType = "defi";
+            } else if (entity && entity.toLowerCase().includes('service') || 
+                       entity && ['stripe', 'paypal', 'cashapp'].includes(entity.toLowerCase())) {
+              entityType = "service";
+            }
+            logo = getGoogleCloudLogoUrl(entity) || getDirectGoogleCloudLogoUrl(entity) || getLogoUrl(entity);
           }
-          
-          // Determine entity type based on entity name or other logic (fallback)
-          if (entity.toLowerCase().includes('exchange') || 
-              ['binance', 'coinbase', 'kraken', 'bitfinex', 'huobi', 'okx'].includes(entity.toLowerCase())) {
-            entityType = "exchange";
-          } else if (entity.toLowerCase().includes('mixer') || 
-                     ['wasabi', 'samourai', 'joinmarket'].includes(entity.toLowerCase())) {
-            entityType = "mixer";
-          } else if (entity.toLowerCase().includes('defi') || 
-                     ['uniswap', 'sushiswap', 'aave', 'compound'].includes(entity.toLowerCase())) {
-            entityType = "defi";
-          } else if (entity.toLowerCase().includes('service') || 
-                     ['stripe', 'paypal', 'cashapp'].includes(entity.toLowerCase())) {
-            entityType = "service";
-          }
-          logo = getSafeLogoPath(entity);
         }
       }
 
@@ -1152,8 +1185,10 @@ export default function FlowTraceApp() {
       
       // Use transaction data to get accurate transaction count and detect pass-through nodes
       let isPassThrough = false;
+      let actualTransactionCount = 0;
+      
       if (transactionData?.txs && Array.isArray(transactionData.txs)) {
-        const actualTransactionCount = transactionData.txs.length;
+        actualTransactionCount = transactionData.txs.length;
         console.log('✅ FIXED: Actual transaction count from transaction data for', address, ':', actualTransactionCount);
         console.log('Transaction data structure:', {
           dataType: typeof transactionData.txs,
@@ -1163,10 +1198,37 @@ export default function FlowTraceApp() {
         });
         if (actualTransactionCount > 0) {
           transactions = actualTransactionCount;
+        }
+      } else if (!transactionData && !addressData) {
+        // If both transaction and address data failed, provide a fallback
+        console.log('All API calls failed for', address, '- providing fallback data');
+        transactions = 1; // Assume at least 1 transaction to allow expansion
+        actualTransactionCount = 1;
+        entityName = "Unknown Entity";
+        entityType = "wallet";
+        logo = getGoogleCloudLogoUrl("unknown") || getDirectGoogleCloudLogoUrl("unknown");
+      } else if (transactionData?.data && Array.isArray(transactionData.data)) {
+        // Fallback to data structure if txs doesn't exist
+        const actualTransactionCount = transactionData.data.length;
+        console.log('Actual transaction count from transaction data (fallback) for', address, ':', actualTransactionCount);
+        if (actualTransactionCount > 0) {
+          transactions = actualTransactionCount;
+        }
+      } else {
+        console.log('No valid transaction data for', address, ':', {
+          hasTransactionData: !!transactionData,
+          hasTxs: !!transactionData?.txs,
+          hasData: !!transactionData?.data,
+          txsType: typeof transactionData?.txs,
+          dataType: typeof transactionData?.data,
+          txsIsArray: Array.isArray(transactionData?.txs),
+          dataIsArray: Array.isArray(transactionData?.data)
+        });
+      }
           
-          // Detect pass-through nodes based on transaction patterns
-          // A true pass-through node should have exactly 2 transactions: 1 incoming and 1 outgoing
-          if (actualTransactionCount === 2) {
+      // Detect pass-through nodes based on transaction patterns
+      // A true pass-through node should have exactly 2 transactions: 1 incoming and 1 outgoing
+      if (actualTransactionCount === 2 && transactionData?.txs) {
             let totalIncoming = 0;
             let totalOutgoing = 0;
             let incomingTx: any = null;
@@ -1239,25 +1301,6 @@ export default function FlowTraceApp() {
                 isPassThrough
               });
             }
-          }
-        }
-      } else if (transactionData?.data && Array.isArray(transactionData.data)) {
-        // Fallback to data structure if txs doesn't exist
-        const actualTransactionCount = transactionData.data.length;
-        console.log('Actual transaction count from transaction data (fallback) for', address, ':', actualTransactionCount);
-        if (actualTransactionCount > 0) {
-          transactions = actualTransactionCount;
-        }
-      } else {
-        console.log('No valid transaction data for', address, ':', {
-          hasTransactionData: !!transactionData,
-          hasTxs: !!transactionData?.txs,
-          hasData: !!transactionData?.data,
-          txsType: typeof transactionData?.txs,
-          dataType: typeof transactionData?.data,
-          txsIsArray: Array.isArray(transactionData?.txs),
-          dataIsArray: Array.isArray(transactionData?.data)
-        });
       }
 
       // Update entity name for pass-through nodes if no entity data is available
@@ -1284,11 +1327,11 @@ export default function FlowTraceApp() {
       return {
         entityName: "Unknown Entity",
         entityType: "wallet",
-        logo: undefined,
+        logo: getGoogleCloudLogoUrl("unknown") || getDirectGoogleCloudLogoUrl("unknown"),
         riskLevel: "medium",
         balance: "0.00000000 BTC",
-        transactions: 0,
-        availableTransactions: 0
+        transactions: 1, // Provide fallback to allow expansion
+        availableTransactions: 1 // Provide fallback to allow expansion
       };
     }
   };
@@ -1624,6 +1667,10 @@ export default function FlowTraceApp() {
         await migrateOldData()
         console.log('Data migration completed')
         
+        // Clean up invalid workspaces
+        await cleanupInvalidWorkspaces()
+        console.log('Workspace cleanup completed')
+        
         // Disable auto-save manager to prevent conflicts with our new caching system
         // const autoSavedState = autoSaveManager.loadAutoSavedState()
         // if (autoSavedState) {
@@ -1719,6 +1766,19 @@ export default function FlowTraceApp() {
                 New Investigation
               </Button>
 
+              {/* Reset to Welcome Screen Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  startNewInvestigation();
+                }}
+                className="flex items-center gap-2"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Welcome Screen
+              </Button>
+
               {/* Save Status */}
               <SaveStatus
                 currentState={{
@@ -1728,8 +1788,7 @@ export default function FlowTraceApp() {
                   selectedNode,
                   zoom,
                   pan,
-                  hidePassThrough,
-                  hideSpam
+                  hidePassThrough
                 }}
                 onSaveWorkspace={() => {}} // No longer needed - both buttons use handleQuickSave
                 currentWorkspaceId={currentWorkspaceId}
